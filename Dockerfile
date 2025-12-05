@@ -3,7 +3,10 @@ FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y \
+    git wget curl build-essential ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
     git \
     wget \
     curl \
