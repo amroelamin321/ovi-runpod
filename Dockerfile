@@ -1,12 +1,9 @@
 FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
-
 WORKDIR /
 
+# Fix tzdata + install packages (ONE LINE)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y \
-    git wget curl build-essential ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
     git \
     wget \
     curl \
@@ -28,12 +25,17 @@ RUN pip install --no-cache-dir flash_attn --no-build-isolation 2>/dev/null || ec
 
 RUN pip install --no-cache-dir runpod cloudinary requests pillow python-dotenv
 
-RUN python3 download_weights.py --output-dir /root/.cache/ovi_models
+RUN python3 download_weights.py --output-dir /root/.cache/ovi_models || echo "Model download will happen on first run"
 
 COPY handler.py /handler.py
 COPY utils.py /utils.py
 
 RUN mkdir -p /tmp/ovi_output
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python3", "-u", "/handler.py"]
+
 
 ENV PYTHONUNBUFFERED=1
 
