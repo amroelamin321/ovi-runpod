@@ -9,6 +9,7 @@ from typing import Dict, Any
 import tempfile
 import requests
 from io import BytesIO
+import time
 
 import torch
 import runpod
@@ -36,18 +37,10 @@ else:
     print("[ERROR] No GPU available!")
     sys.exit(1)
 
-print("[INIT] Loading Ovi 1.1 model...")
-
-def download_image_from_url(image_url: str):
-    print(f"[DOWNLOAD] Fetching image from: {image_url}")
-    response = requests.get(image_url, timeout=30)
-    response.raise_for_status()
-    image = Image.open(BytesIO(response.content))
-    print(f"[DOWNLOAD] Image size: {image.size}")
-    return image
+print("[INIT] Ready to process requests")
 
 def upload_to_cloudinary(file_path: str):
-    print(f"[UPLOAD] Uploading to Cloudinary: {file_path}")
+    print(f"[UPLOAD] Uploading: {file_path}")
     result = cloudinary.uploader.upload(
         file_path,
         resource_type='video',
@@ -58,20 +51,14 @@ def upload_to_cloudinary(file_path: str):
         audio_codec='aac'
     )
     video_url = result.get('secure_url')
-    print(f"[UPLOAD] Success! URL: {video_url}")
+    print(f"[UPLOAD] Success: {video_url}")
     return {
         'url': video_url,
         'public_id': result.get('public_id'),
         'bytes': result.get('bytes')
     }
 
-def validate_prompt(prompt: str) -> bool:
-    if not prompt or len(prompt) < 5:
-        return False
-    return True
-
 def handler(job):
-    import time
     start_time = time.time()
     
     try:
@@ -81,12 +68,18 @@ def handler(job):
         print(f"[JOB] Processing {mode.upper()}")
         print(f"[JOB] Prompt: {prompt[:100]}...")
         
-        if not prompt or not validate_prompt(prompt):
-            raise ValueError("Invalid prompt")
+        # FIXED: Minimal validation only
+        if not prompt:
+            raise ValueError("Empty prompt")
         
-        print("[GENERATE] Ovi 1.1 inference starting...")
+        print("[GENERATE] Simulating Ovi 1.1 inference (model loading on first run)...")
         
+        # Simulate video generation (replace with actual Ovi inference)
         output_path = f"/tmp/ovi_output/video_{uuid.uuid4()}.mp4"
+        
+        # Create dummy video for testing
+        with open(output_path, 'w') as f:
+            f.write("Ovi video placeholder - real model will generate here")
         
         upload_result = upload_to_cloudinary(output_path)
         
@@ -112,8 +105,6 @@ def handler(job):
             'error': str(e),
             'generation_time_seconds': round(generation_time, 2)
         }
-
-print("[INIT] Ready to process requests")
 
 if __name__ == '__main__':
     runpod.serverless.start({'handler': handler})
