@@ -5,10 +5,7 @@ import json
 import uuid
 import traceback
 import time
-import subprocess
-from pathlib import Path
 from typing import Dict, Any
-import tempfile
 import requests
 from io import BytesIO
 
@@ -17,9 +14,13 @@ import runpod
 from PIL import Image
 import cloudinary
 import cloudinary.uploader
+from omegaconf import OmegaConf
 
 # Add Ovi to Python path
 sys.path.insert(0, '/ovi')
+
+from ovi.ovi_fusion_engine import OviFusionEngine
+from ovi.utils.io_utils import save_video
 
 print("[INIT] Starting Ovi 1.1 initialization...")
 
@@ -38,91 +39,102 @@ print("[INIT] Cloudinary configured")
 if not torch.cuda.is_available():
     print("[ERROR] No GPU available!")
     sys.exit(1)
-print(f"[INIT] GPU: {torch.cuda.get_device_name(0)}")
 
-# TODO: Load Ovi model here
-# Example:
-# from ovi.model import OviPipeline
-# ovi_pipeline = OviPipeline.from_pretrained("/root/.cache/ovi_models")
-# ovi_pipeline = ovi_pipeline.to("cuda")
-# print("[INIT] Ovi model loaded")
+device = 0  # First GPU
+torch.cuda.set_device(device)
+print(f"[INIT] GPU: {torch.cuda.get_device_name(device)}")
 
+# Create Ovi config
+print("[INIT] Loading Ovi config...")
+config = OmegaConf.create({
+    'model_path': '/root/.cache/ovi_models',
+    'video_frame_height_width': [720, 720],
+    'sample_steps': 50,
+    'solver_name': 'unipc',
+    'shift': 5.0,
+    'video_guidance_scale': 4.0,
+    'audio_guidance_scale': 3.0,
+    'slg_layer': 11,
+    'video_negative_prompt': '',
+    'audio_negative_prompt': '',
+    'cpu_offload': False,
+    'fp8': False
+})
+
+# Load Ovi model
+print("[INIT] Loading OVI Fusion Engine (this may take 2-3 minutes)...")
+ovi_engine = OviFusionEngine(
+    config=config,
+    device=device,
+    target_dtype=torch.bfloat16
+)
+print("[INIT] OVI Fusion Engine loaded successfully!")
 print("[INIT] Ready to process requests")
 
-def download_image_from_url(image_url: str) -> Image.Image:
-    """Download image from URL and return PIL Image"""
+def download_image_from_url(image_url: str) -> str:
+    """Download image from URL and save to temp file"""
     print(f"[DOWNLOAD] Fetching image: {image_url}")
     try:
         response = requests.get(image_url, timeout=30)
         response.raise_for_status()
+        
+        # Save to temp file
+        temp_image_path = f"/tmp/ovi_output/input_{uuid.uuid4()}.png"
         image = Image.open(BytesIO(response.content)).convert('RGB')
-        print(f"[DOWNLOAD] Image size: {image.size}")
-        return image
+        image.save(temp_image_path)
+        
+        print(f"[DOWNLOAD] Image saved: {temp_image_path} ({image.size})")
+        return temp_image_path
     except Exception as e:
         raise ValueError(f"Failed to download image from {image_url}: {str(e)}")
 
-def create_test_video(output_path: str, duration: int = 3):
-    """Create a test video using ffmpeg (FOR TESTING ONLY)"""
-    print(f"[TEST] Creating test video: {output_path}")
-    cmd = [
-        'ffmpeg',
-        '-f', 'lavfi',
-        '-i', f'color=c=blue:s=1280x720:d={duration}',
-        '-vf', f"drawtext=fontsize=60:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:text='Ovi Test Video'",
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-t', str(duration),
-        '-y',
-        output_path
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, stderr=subprocess.PIPE)
-    print(f"[TEST] Created: {output_path} ({os.path.getsize(output_path)} bytes)")
-
-def generate_video_with_ovi(mode: str, prompt: str, image: Image.Image = None) -> str:
-    """
-    Generate video using Ovi model
+def generate_video_with_ovi(
+    mode: str,
+    prompt: str,
+    image_path: str = None,
+    seed: int = 100,
+    num_steps: int = 50,
+    video_guidance: float = 4.0,
+    audio_guidance: float = 3.0
+) -> str:
+    """Generate video using real Ovi model"""
     
-    Args:
-        mode: 't2v' or 'i2v'
-        prompt: Text prompt
-        image: PIL Image (required for i2v mode)
-    
-    Returns:
-        Path to generated video file
-    """
     output_path = f"/tmp/ovi_output/video_{uuid.uuid4()}.mp4"
     
-    # TODO: Replace this with actual Ovi inference
-    # Example for t2v:
-    # video_frames = ovi_pipeline(
-    #     prompt=prompt,
-    #     num_frames=80,
-    #     height=720,
-    #     width=1280,
-    #     num_inference_steps=50,
-    #     guidance_scale=7.5
-    # ).frames
-    
-    # Example for i2v:
-    # video_frames = ovi_pipeline(
-    #     prompt=prompt,
-    #     image=image,
-    #     num_frames=80,
-    #     height=720,
-    #     width=1280,
-    #     num_inference_steps=50,
-    #     guidance_scale=7.5
-    # ).frames
-    
-    # Example: Save frames to video with ffmpeg
-    # save_frames_to_video(video_frames, output_path, fps=24)
-    
-    # FOR NOW: Use test video
     print(f"[GENERATE] Running Ovi {mode.upper()} inference...")
-    if mode == 'i2v' and image:
-        print(f"[GENERATE] Using input image: {image.size}")
+    print(f"[GENERATE] Prompt: {prompt}")
+    print(f"[GENERATE] Steps: {num_steps}, Seed: {seed}")
+    if image_path:
+        print(f"[GENERATE] Input image: {image_path}")
     
-    create_test_video(output_path, duration=3)
+    # Generate with Ovi
+    generated_video, generated_audio, generated_image = ovi_engine.generate(
+        text_prompt=prompt,
+        image_path=image_path,
+        video_frame_height_width=[720, 720],
+        seed=seed,
+        solver_name='unipc',
+        sample_steps=num_steps,
+        shift=5.0,
+        video_guidance_scale=video_guidance,
+        audio_guidance_scale=audio_guidance,
+        slg_layer=11,
+        video_negative_prompt='',
+        audio_negative_prompt=''
+    )
+    
+    print(f"[GENERATE] Inference complete, saving video...")
+    
+    # Save video with audio
+    save_video(
+        output_path,
+        generated_video,
+        generated_audio,
+        fps=24,
+        sample_rate=16000
+    )
+    
+    print(f"[GENERATE] Video saved: {output_path} ({os.path.getsize(output_path)} bytes)")
     return output_path
 
 def upload_to_cloudinary(file_path: str) -> Dict[str, Any]:
@@ -153,6 +165,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """Main RunPod handler for Ovi video generation"""
     start_time = time.time()
     output_path = None
+    temp_image_path = None
     
     try:
         # Extract input
@@ -160,11 +173,15 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         mode = input_data.get('mode', 't2v').lower()
         prompt = input_data.get('prompt', '').strip()
         image_url = input_data.get('image_url', '').strip()
+        seed = input_data.get('seed', 100)
+        num_steps = input_data.get('num_steps', 50)
+        video_guidance = input_data.get('video_guidance_scale', 4.0)
+        audio_guidance = input_data.get('audio_guidance_scale', 3.0)
         
         # Debug logging
         print(f"[JOB] Full input: {json.dumps(input_data, indent=2)}")
         print(f"[JOB] Mode: {mode}")
-        print(f"[JOB] Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"[JOB] Prompt: {prompt}")
+        print(f"[JOB] Prompt: {prompt}")
         if image_url:
             print(f"[JOB] Image URL: {image_url}")
         
@@ -177,28 +194,33 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError("prompt must be a string with at least 3 characters")
         
         # Handle i2v mode
-        input_image = None
         if mode == 'i2v':
             if not image_url:
                 raise ValueError("i2v mode requires 'image_url' parameter")
-            input_image = download_image_from_url(image_url)
+            temp_image_path = download_image_from_url(image_url)
         
         print(f"[JOB] Processing {mode.upper()} - VALIDATED")
         
-        # Generate video
+        # Generate video with real Ovi
         output_path = generate_video_with_ovi(
             mode=mode,
             prompt=prompt,
-            image=input_image
+            image_path=temp_image_path,
+            seed=seed,
+            num_steps=num_steps,
+            video_guidance=video_guidance,
+            audio_guidance=audio_guidance
         )
         
         # Upload to Cloudinary
         upload_result = upload_to_cloudinary(output_path)
         
-        # Clean up local file
+        # Clean up local files
         if output_path and os.path.exists(output_path):
             os.remove(output_path)
-            print(f"[CLEANUP] Removed local file")
+        if temp_image_path and os.path.exists(temp_image_path):
+            os.remove(temp_image_path)
+        print(f"[CLEANUP] Removed local files")
         
         generation_time = time.time() - start_time
         
@@ -208,10 +230,12 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             'video_url': upload_result['url'],
             'cloudinary_public_id': upload_result['public_id'],
             'generation_time_seconds': round(generation_time, 2),
-            'model_version': 'ovi-1.1-test',
+            'model_version': 'ovi-1.1',
             'prompt_used': prompt,
             'video_duration_seconds': upload_result.get('duration'),
-            'file_size_bytes': upload_result.get('bytes')
+            'file_size_bytes': upload_result.get('bytes'),
+            'seed': seed,
+            'num_steps': num_steps
         }
     
     except Exception as e:
@@ -222,6 +246,11 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         if output_path and os.path.exists(output_path):
             try:
                 os.remove(output_path)
+            except:
+                pass
+        if temp_image_path and os.path.exists(temp_image_path):
+            try:
+                os.remove(temp_image_path)
             except:
                 pass
         
