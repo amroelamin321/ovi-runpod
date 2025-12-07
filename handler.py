@@ -40,7 +40,7 @@ device = 0
 torch.cuda.set_device(device)
 print(f"[INIT] GPU: {torch.cuda.get_device_name(device)}")
 
-# ⭐⭐⭐ AUTO-DOWNLOAD WEIGHTS ON FIRST LOAD ⭐⭐⭐
+# Auto-download weights on first load
 model_path = '/root/.cache/ovi_models'
 if not os.path.exists(f'{model_path}/checkpoints'):
     print(f"[INIT] Model weights not found. Downloading (~30GB, may take 5-10 minutes)...")
@@ -60,10 +60,13 @@ config = OmegaConf.create({
     'slg_layer': 11,
     'video_negative_prompt': '',
     'audio_negative_prompt': '',
-    'cpu_offload': False,
+    'cpu_offload': True,   # ⭐⭐⭐ ENABLE CPU OFFLOAD FOR 32GB GPU ⭐⭐⭐
     'fp8': False,
     'seed': 100
 })
+
+# ⭐⭐⭐ SET PYTORCH MEMORY OPTIMIZATION ⭐⭐⭐
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 print("[INIT] Loading OVI Fusion Engine...")
 try:
@@ -80,4 +83,4 @@ except Exception as e:
 
 print("[INIT] ✅ Ready to process requests")
 
-# ... REST OF HANDLER CODE (same as before) ...
+# ... REST OF HANDLER CODE (download_image_from_url, generate_video_with_ovi, etc.) ...
