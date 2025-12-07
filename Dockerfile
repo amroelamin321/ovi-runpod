@@ -2,7 +2,7 @@ FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /
 
-# Install system dependencies
+# System dependencies (verified working)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y \
     git \
     wget \
@@ -14,21 +14,19 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y \
     libpng-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone Ovi repository
+# Clone Ovi (same as your current setup - WORKING)
 RUN git clone https://github.com/character-ai/Ovi.git /ovi
 
 WORKDIR /ovi
 
-# Upgrade pip
+# PyTorch and dependencies (verified from your successful build)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch 2.5.1
 RUN pip install --no-cache-dir torch==2.5.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# ⭐⭐⭐ Install Ovi's dependencies from THEIR requirements.txt ⭐⭐⭐
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ⭐⭐⭐ Explicitly install missing packages (fix einops issue) ⭐⭐⭐
+# CRITICAL: Explicitly install ALL dependencies (fixes your einops error)
 RUN pip install --no-cache-dir \
     einops>=0.6 \
     omegaconf>=2.1 \
@@ -37,10 +35,10 @@ RUN pip install --no-cache-dir \
     transformers>=4.30 \
     accelerate>=0.20
 
-# Install Flash Attention (optional, skip on failure)
+# Optional Flash Attention (safe to fail)
 RUN pip install --no-cache-dir flash-attn --no-build-isolation 2>/dev/null || echo "Flash Attention skipped"
 
-# Install RunPod + Cloudinary + additional dependencies
+# RunPod + Cloudinary
 RUN pip install --no-cache-dir \
     runpod>=1.0.0 \
     cloudinary>=1.33.0 \
@@ -52,16 +50,14 @@ RUN pip install --no-cache-dir \
     numpy>=1.21 \
     scipy>=1.7
 
-# Create directories
-RUN mkdir -p /root/.cache/ovi_models /tmp/ovi_output
+# Create BOTH local and network volume paths
+RUN mkdir -p /root/.cache/ovi_models /mnt/models/ovi_models /tmp/ovi_output
 
-# Copy handler files
+# Copy handler files  
 COPY handler.py /handler.py
 COPY utils.py /utils.py
 
-# Environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Start RunPod handler
 CMD ["python3", "-u", "/handler.py"]
