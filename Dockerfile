@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn9-runtime
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /
 
@@ -19,7 +19,7 @@ WORKDIR /ovi
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch 2.6.0 (with correct wheel)
+# Install PyTorch 2.6.0 (overrides base image)
 RUN pip install --no-cache-dir torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # Install Ovi requirements
