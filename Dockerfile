@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.1.0-runtime-cuda12.1-runtime
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn9-runtime
 
 WORKDIR /
 
@@ -19,7 +19,7 @@ WORKDIR /ovi
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch 2.6.0
+# Install PyTorch 2.6.0 (with correct wheel)
 RUN pip install --no-cache-dir torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # Install Ovi requirements
@@ -42,9 +42,4 @@ COPY utils.py /utils.py
 ENV PYTHONUNBUFFERED=1
 
 # Start RunPod serverless
-CMD ["python3", "-u", "/handler.py"]
-
-
-ENV PYTHONUNBUFFERED=1
-
 CMD ["python3", "-u", "/handler.py"]
