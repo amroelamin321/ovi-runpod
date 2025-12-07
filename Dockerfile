@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
+FROM pytorch/pytorch:2.1.0-runtime-cuda12.1-runtime
 
 WORKDIR /
 
@@ -19,19 +19,19 @@ WORKDIR /ovi
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch 2.5.1 (exists!) - base image already has compatible version
-RUN pip install --no-cache-dir --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Install PyTorch 2.6.0
+RUN pip install --no-cache-dir torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # Install Ovi requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Optional: Flash Attention (skip if fails)
-RUN pip install --no-cache-dir flash-attn --no-build-isolation || true
+RUN pip install --no-cache-dir flash-attn --no-build-isolation 2>/dev/null || echo "Flash Attention skipped"
 
 # Install RunPod + Cloudinary
-RUN pip install --no-cache-dir runpod==0.7.0 cloudinary pillow requests python-dotenv
+RUN pip install --no-cache-dir runpod cloudinary pillow requests python-dotenv
 
-# Skip model download during build (too slow, download on first run)
+# Create output directories
 RUN mkdir -p /root/.cache/ovi_models /tmp/ovi_output
 
 # Copy handler files
@@ -43,6 +43,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Start RunPod serverless
 CMD ["python3", "-u", "/handler.py"]
+
 
 ENV PYTHONUNBUFFERED=1
 
