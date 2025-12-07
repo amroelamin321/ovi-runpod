@@ -19,23 +19,23 @@ WORKDIR /ovi
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch 2.5.1 (2.6.0 not available for CUDA 12.1)
+# Install PyTorch 2.5.1
 RUN pip install --no-cache-dir torch==2.5.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # Install Ovi dependencies from their requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Flash Attention (optional, skip on failure)
-RUN pip install --no-cache-dir flash-attn --no-build-isolation 2>/dev/null || echo "Flash Attention skipped - will use regular attention"
+# Install Flash Attention (skip on failure)
+RUN pip install --no-cache-dir flash-attn --no-build-isolation 2>/dev/null || echo "Flash Attention skipped"
 
 # Install RunPod + Cloudinary
 RUN pip install --no-cache-dir runpod cloudinary requests pillow python-dotenv
 
-# ⭐⭐⭐ CRITICAL: Download Ovi model weights (40GB+) ⭐⭐⭐
-RUN python3 download_weights.py --output-dir /root/.cache/ovi_models
+# ⭐⭐⭐ DO NOT DOWNLOAD WEIGHTS IN DOCKERFILE - TIMEOUT ISSUE ⭐⭐⭐
+# Weights will auto-download on first inference (~30GB, takes ~5-10 min on first job)
 
-# Create output directories
-RUN mkdir -p /tmp/ovi_output
+# Create directories
+RUN mkdir -p /root/.cache/ovi_models /tmp/ovi_output
 
 # Copy handler files
 COPY handler.py /handler.py
