@@ -5,6 +5,7 @@ import json
 import uuid
 import traceback
 import time
+import subprocess
 from pathlib import Path
 from typing import Dict, Any
 import tempfile
@@ -41,6 +42,23 @@ else:
     sys.exit(1)
 
 print("[INIT] Ready to process requests")
+
+def create_test_video(output_path: str, duration: int = 3):
+    """Create a real test video using ffmpeg"""
+    print(f"[VIDEO] Creating test video: {output_path}")
+    cmd = [
+        'ffmpeg',
+        '-f', 'lavfi',
+        '-i', f'color=c=blue:s=1280x720:d={duration}',
+        '-vf', f"drawtext=fontsize=60:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:text='Ovi Test Video'",
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-t', str(duration),
+        '-y',
+        output_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    print(f"[VIDEO] Created: {output_path} ({os.path.getsize(output_path)} bytes)")
 
 def download_image_from_url(image_url: str) -> Image.Image:
     """Download and return PIL Image from URL"""
@@ -87,7 +105,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[JOB] Prompt length: {len(prompt)} chars")
         print(f"[JOB] Prompt preview: {prompt[:100]}...")
         
-        # VALIDATION - FIXED VERSION
+        # VALIDATION
         if not isinstance(prompt, str):
             raise ValueError("prompt must be a string")
         if len(prompt) < 3:
@@ -95,17 +113,20 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         
         print(f"[JOB] Processing {mode.upper()} - VALIDATED")
         
-        # GENERATE VIDEO (placeholder - replace with actual Ovi code)
-        print("[GENERATE] Running Ovi inference...")
-        time.sleep(5)  # Simulate generation time
+        # GENERATE VIDEO
+        print("[GENERATE] Running Ovi inference (TEST MODE)...")
         
-        # Create fake output video for testing
+        # Create real test video with ffmpeg
         output_path = f"/tmp/ovi_output/video_{uuid.uuid4()}.mp4"
-        with open(output_path, 'w') as f:
-            f.write("Fake video for testing - replace with real Ovi output")
+        create_test_video(output_path, duration=3)
         
         # Upload to Cloudinary
         upload_result = upload_to_cloudinary(output_path)
+        
+        # Clean up local file
+        if os.path.exists(output_path):
+            os.remove(output_path)
+            print(f"[CLEANUP] Removed local file")
         
         generation_time = time.time() - start_time
         
@@ -114,9 +135,10 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             'mode': mode,
             'video_url': upload_result['url'],
             'generation_time_seconds': round(generation_time, 2),
-            'model_version': 'ovi-1.1',
-            'video_duration': '10 seconds',
-            'prompt_used': prompt
+            'model_version': 'ovi-1.1-test',
+            'video_duration': '3 seconds',
+            'prompt_used': prompt,
+            'cloudinary_public_id': upload_result['public_id']
         }
     
     except Exception as e:
@@ -127,6 +149,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'status': 'error',
             'error': str(e),
+            'error_type': type(e).__name__,
             'generation_time_seconds': round(generation_time, 2)
         }
 
