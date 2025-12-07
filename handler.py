@@ -181,11 +181,11 @@ def handler(job):
         output_path = generate_video_with_ovi(prompt, image)
         
         # Upload to Cloudinary
-        upload_result = cloudinary.uploader.upload_video(
-            output_path,
-            resource_type="video",
-            public_id=f"ovi_{uuid.uuid4()}"
-        )
+upload_result = cloudinary.uploader.upload(
+    output_path,
+    resource_type="video",
+    public_id=f"ovi_{uuid.uuid4()}"
+)
         
         return {
             "status": "success",
