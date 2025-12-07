@@ -16,6 +16,9 @@ import cloudinary
 import cloudinary.uploader
 from omegaconf import OmegaConf
 
+# ⭐ SET MEMORY CONFIG BEFORE IMPORTING OVI
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 sys.path.insert(0, '/ovi')
 
 from ovi.ovi_fusion_engine import OviFusionEngine
@@ -41,8 +44,6 @@ torch.cuda.set_device(device)
 print(f"[INIT] GPU: {torch.cuda.get_device_name(device)}")
 
 # ⭐ SMART PATH SELECTION ⭐
-# Priority 1: Network volume (persistent, production)
-# Priority 2: Local cache (fallback, for development)
 if os.path.ismount('/mnt/models') and os.path.exists('/mnt/models/ovi_models'):
     model_path = '/mnt/models/ovi_models'
     print("[INIT] Using Network Volume at /mnt/models/ovi_models ✅")
@@ -50,7 +51,7 @@ else:
     model_path = '/root/.cache/ovi_models'
     print("[INIT] Network Volume not attached, using local cache ⚠️")
 
-# STEP 1: Check if models exist (avoid re-downloading every time)
+# STEP 1: Check if models exist
 weights_exist = (
     os.path.exists(f'{model_path}/Ovi') and
     os.path.exists(f'{model_path}/Wan2.2-TI2V-5B') and
@@ -61,7 +62,6 @@ weights_exist = (
 if not weights_exist:
     print(f"[INIT] Models not found at {model_path}")
     print(f"[INIT] Downloading (~30GB, takes 10-15 minutes on first run)...")
-    print(f"[INIT] Models will be cached - no re-download on next job")
     
     try:
         result = os.system(f"cd /ovi && python3 download_weights.py --output-dir {model_path}")
@@ -75,7 +75,7 @@ if not weights_exist:
 else:
     print("[INIT] Models already cached - using existing weights ✅")
 
-# STEP 2: Verify all models actually exist before loading
+# STEP 2: Verify all models exist
 required_models = {
     'Ovi checkpoint': f'{model_path}/Ovi',
     'Wan 2.2 VAE': f'{model_path}/Wan2.2-TI2V-5B',
@@ -89,7 +89,7 @@ for model_name, model_path_check in required_models.items():
 
 print("[INIT] ✅ All model files verified")
 
-# STEP 3: Load OVI config with MEMORY OPTIMIZATION
+# STEP 3: Load OVI config
 print("[INIT] Loading Ovi config...")
 config = OmegaConf.create({
     'ckpt_dir': model_path,
@@ -103,13 +103,10 @@ config = OmegaConf.create({
     'slg_layer': 11,
     'video_negative_prompt': '',
     'audio_negative_prompt': '',
-    'cpu_offload': True,  # ⭐ CRITICAL FOR 32GB GPU ⭐
+    'cpu_offload': True,
     'fp8': False,
     'seed': 100
 })
-
-# STEP 4: Memory optimization for CUDA
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 print("[INIT] Loading OVI Fusion Engine...")
 try:
@@ -121,18 +118,12 @@ try:
     print("[INIT] ✅ OVI Fusion Engine loaded successfully!")
 except Exception as e:
     print(f"[ERROR] Failed to load Ovi engine: {str(e)}")
-    print("[ERROR] Common causes:")
-    print("  1. Incomplete model downloads")
-    print("  2. Corrupted model files")
-    print("  3. Out of memory - try restarting endpoint")
     print(traceback.format_exc())
     sys.exit(1)
 
 print("[INIT] ✅ Ready to process requests")
 
-# ==================== REST OF HANDLER CODE ====================
-# (Keep your existing generate_video_with_ovi, download_image_from_url, etc.)
-# Just make sure they also reference the same model_path variable
+# ==================== HANDLER FUNCTIONS ====================
 
 def download_image_from_url(image_url: str) -> Image.Image:
     """Download image from URL"""
@@ -154,45 +145,94 @@ def generate_video_with_ovi(
     try:
         print(f"[GENERATE] Prompt: {prompt}")
         print(f"[GENERATE] Steps: {num_steps}")
+        print(f"[GENERATE] Seed: {seed}")
         
-        # Call ovi_engine.generate(...) here with your logic
-        # This is where video generation happens
+        # Clear GPU cache before generation
+        torch.cuda.empty_cache()
         
-        return "/tmp/ovi_output/output.mp4"
+        # Call the actual Ovi generation
+        # If image provided, use image-to-video mode
+        if image is not None:
+            print(f"[GENERATE] Using image-to-video mode")
+            output = ovi_engine.generate(
+                prompt=prompt,
+                image=image,
+                num_steps=num_steps,
+                seed=seed
+            )
+        else:
+            print(f"[GENERATE] Using text-to-video mode")
+            output = ovi_engine.generate(
+                prompt=prompt,
+                num_steps=num_steps,
+                seed=seed
+            )
+        
+        # Save video to output path
+        output_path = '/tmp/ovi_output/output.mp4'
+        save_video(output, output_path)
+        
+        print(f"[GENERATE] ✅ Video generated: {output_path}")
+        return output_path
+        
     except Exception as e:
         print(f"[ERROR] Generation failed: {str(e)}")
+        print(traceback.format_exc())
         raise
 
 def handler(job):
-    """RunPod handler"""
+    """RunPod Serverless handler"""
     try:
+        print(f"[JOB] Processing job: {job['id']}")
+        
         job_input = job['input']
         prompt = job_input.get('prompt')
         image_url = job_input.get('image_url')
+        num_steps = job_input.get('num_steps', 50)
+        seed = job_input.get('seed', 100)
         
         if not prompt:
             return {"status": "error", "message": "Prompt required"}
         
-        if image_url:
-            image = download_image_from_url(image_url)
-        else:
-            image = None
+        print(f"[JOB] Prompt: {prompt}")
+        print(f"[JOB] Image URL: {image_url}")
+        print(f"[JOB] Steps: {num_steps}, Seed: {seed}")
         
-        output_path = generate_video_with_ovi(prompt, image)
+        # Download image if provided
+        image = None
+        if image_url:
+            print(f"[JOB] Downloading image...")
+            image = download_image_from_url(image_url)
+            print(f"[JOB] Image downloaded: {image.size}")
+        
+        # Generate video
+        print(f"[JOB] Starting video generation...")
+        output_path = generate_video_with_ovi(prompt, image, num_steps, seed)
         
         # Upload to Cloudinary
-upload_result = cloudinary.uploader.upload(
-    output_path,
-    resource_type="video",
-    public_id=f"ovi_{uuid.uuid4()}"
-)
+        print(f"[JOB] Uploading to Cloudinary...")
+        upload_result = cloudinary.uploader.upload(
+            output_path,
+            resource_type="video",
+            public_id=f"ovi_{uuid.uuid4()}"
+        )
         
+        print(f"[JOB] ✅ Job completed successfully")
         return {
             "status": "success",
             "video_url": upload_result['secure_url'],
-            "duration": upload_result.get('duration', 'N/A')
+            "duration": upload_result.get('duration', 'N/A'),
+            "public_id": upload_result.get('public_id')
         }
+        
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        print(f"[ERROR] Handler exception: {str(e)}")
+        print(traceback.format_exc())
+        return {
+            "status": "error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }
 
+# Start the serverless handler
 runpod.serverless.start({"handler": handler})
