@@ -2,7 +2,7 @@ import torch
 from PIL import Image
 import numpy as np
 
-def load_image_and_resize(image_path: str, target_size: int = 960):
+def load_image_and_resize(image_path: str, target_size: int = 960) -> Image.Image:
     image = Image.open(image_path)
     width, height = image.size
     aspect_ratio = width / height
@@ -26,10 +26,10 @@ def load_image_and_resize(image_path: str, target_size: int = 960):
 
 def get_guidance_scales(video_scale: float = 4.0, audio_scale: float = 3.0):
     if not (0.0 < video_scale <= 10.0):
-        raise ValueError("video_guidance_scale must be 0-10")
+        raise ValueError(f"video_guidance_scale must be 0-10")
     
     if not (0.0 < audio_scale <= 10.0):
-        raise ValueError("audio_guidance_scale must be 0-10")
+        raise ValueError(f"audio_guidance_scale must be 0-10")
     
     return {
         'video': video_scale,
