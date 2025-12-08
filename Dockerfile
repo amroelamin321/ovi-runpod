@@ -42,7 +42,15 @@ WORKDIR /
 # Clone Ovi repository
 RUN git clone https://github.com/character-ai/Ovi.git /ovi
 
-# Download Ovi 1.1 model weights (~28GB unquantized)
+# ============================================
+# FIX: Install requirements FIRST before downloading models
+# ============================================
+
+# Copy and install Python dependencies
+COPY requirements.txt /requirements.txt
+RUN pip install --no-cache-dir -r /requirements.txt
+
+# Now download Ovi 1.1 model weights (~28GB unquantized)
 # This layer caches the model after first build
 RUN mkdir -p /models/ovi-1-1 && \
     cd /ovi && \
@@ -80,11 +88,7 @@ transformers.AutoTokenizer.from_pretrained('google-t5/t5-base', cache_dir='/mode
 transformers.AutoModel.from_pretrained('google-t5/t5-base', cache_dir='/models/.cache'); \
 print('✓ T5 encoder cached')"
 
-# Install Python dependencies
-COPY requirements.txt /requirements.txt
-RUN pip install --no-cache-dir -r /requirements.txt
-
-# Copy handler code
+# Copy handler code and config
 COPY handler.py /handler.py
 COPY config/ /config/
 
