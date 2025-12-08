@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.0-cudnn-devel-ubuntu22.04
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -9,9 +9,8 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/models/.cache/huggingface \
     PYTHONPATH=/workspace:$PYTHONPATH
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
+    python3.10 \
     python3-pip \
     python3-dev \
     build-essential \
@@ -26,17 +25,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 
 RUN pip install --upgrade pip setuptools wheel
 
 WORKDIR /workspace
 
-# Install PyTorch nightly with CUDA 12.6 and sm_120 support
-RUN pip install --no-cache-dir --pre torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/nightly/cu126
+# Install PyTorch 2.1.0 (compatible with RTX 6000 Ada)
+RUN pip install --no-cache-dir torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0
 
-# Install core dependencies
+# Install core ML packages
 RUN pip install --no-cache-dir \
     transformers==4.36.0 \
     diffusers==0.25.0 \
@@ -60,19 +58,22 @@ RUN pip install --no-cache-dir \
     scipy==1.11.4 \
     pyyaml==6.0.1
 
-# Clone Ovi repository into workspace
+# Clone Ovi repository
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
-# Download models
+# Download models (commented out for now - will check if models exist at runtime)
 RUN mkdir -p /models && python -c "\
 import huggingface_hub; \
 print('Downloading Ovi models...'); \
-huggingface_hub.snapshot_download('character-ai/Ovi-1.1', \
-    cache_dir='/models/.cache', \
-    local_dir='/models/ovi-1.1', \
-    allow_patterns=['*.safetensors', '*.json', '*.yaml'], \
-    resume_download=True); \
-print('✓ Downloaded')"
+try: \
+    huggingface_hub.snapshot_download('character-ai/Ovi-1.1', \
+        cache_dir='/models/.cache', \
+        local_dir='/models/ovi-1.1', \
+        allow_patterns=['*.safetensors', '*.json', '*.yaml'], \
+        resume_download=True); \
+    print('✓ Downloaded'); \
+except Exception as e: \
+    print(f'Model download will happen at runtime: {e}')"
 
 COPY handler.py /workspace/handler.py
 COPY config/ /workspace/config/
