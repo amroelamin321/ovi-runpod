@@ -1,0 +1,48 @@
+# Ovi 1.1 Inference Configuration
+# Optimized for RTX 5090 32GB
+
+# Model configuration
+model_name: "ovi-1.1"
+model_path: "/models/ovi-1-1"
+dtype: "bfloat16"  # Use bf16 for RTX 5090
+use_fp8: false     # fp8 causes quality degradation, not recommended
+
+# Inference sampling
+num_steps: 30      # 30 steps is sweet spot for RTX 5090 (3-5 sec/step = 1.5-2.5 min total)
+solver_name: "unipc"  # Faster than Euler, better quality
+shift: 5.0         # Timestep shift for sampling scheduler
+
+# Random seed
+seed: 42           # Will be overridden by job input if provided
+
+# Guidance strengths (critical for sync)
+audio_guidance_scale: 3.0   # Audio-to-text alignment
+video_guidance_scale: 4.0   # Video-to-text alignment
+slg_layer: 11              # Skip layer guidance at layer 11
+
+# Multi-GPU settings
+sp_size: 1         # Sequence parallelism (1 GPU per endpoint)
+cp_size: 1         # Context parallelism
+
+# Memory optimization
+cpu_offload: false  # CPU offload adds 20s, RTX 5090 has enough VRAM
+gradient_checkpointing: false
+
+# Output configuration
+output_fps: 24     # 24 FPS standard
+video_codec: "h264"
+audio_codec: "aac"
+bitrate_video: "10M"
+bitrate_audio: "128k"
+
+# Duration support
+supported_durations: [5, 10]  # Both 5s and 10s modes
+frames_per_duration:
+  5: 121   # 5 seconds at 24 FPS = 120 frames + 1
+  10: 241  # 10 seconds at 24 FPS = 240 frames + 1
+
+# Cache configuration
+cache_mode: "disk"        # Use disk cache for VAE
+cache_dir: "/models/.cache"
+torch_cache_dir: "/models/.torch"
+hf_cache_dir: "/models/.cache/huggingface"
