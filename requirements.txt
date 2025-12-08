@@ -1,36 +1,43 @@
-# Core dependencies
-torch==2.0.1
-torchvision==0.15.2
-torchaudio==2.0.1
+# Core dependencies - CUDA 12.1 compatible
+torch==2.1.0
+torchvision==0.16.0
+torchaudio==2.1.0
 
-# Ovi and dependencies
-transformers==4.35.0
-diffusers==0.24.0
+# Transformers and diffusion
+transformers==4.36.0
+diffusers==0.25.0
+accelerate==0.25.0
+
+# Core ML dependencies
 einops==0.7.0
-timm==0.9.7
-tensorboard==2.14.0
+timm==0.9.12
+tensorboard==2.15.1
+safetensors==0.4.1
 
 # Cloudinary integration
-cloudinary==1.35.0
+cloudinary==1.40.0
 
-# RunPod
-runpod==0.10.0
+# RunPod SDK
+runpod==1.6.2
 
 # Image processing
 Pillow==10.1.0
-opencv-python==4.8.1.78
+opencv-python-headless==4.8.1.78
 
 # Audio processing
-librosa==0.10.0
-audioread==3.1.0
+librosa==0.10.1
+audioread==3.0.1
 soundfile==0.12.1
+resampy==0.4.2
 
-# Utilities
-numpy==1.26.2
+# Core utilities
+numpy==1.24.3
 scipy==1.11.4
 pyyaml==6.0.1
 python-dotenv==1.0.0
 
-# Optimization (optional but recommended)
-xformers==0.0.22
-peft==0.7.1
+# Hugging Face
+huggingface-hub==0.20.1
+
+# No xformers - causes build issues, not essential
+# peft removed - not needed for inference
