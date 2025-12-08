@@ -4,12 +4,7 @@ import sys
 import json
 import uuid
 import traceback
-import time
-from typing import Dict, Any
-import requests
-from io import BytesIO
 
-# ⭐ SET THIS FIRST, BEFORE ANY TORCH IMPORT
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 import torch
@@ -24,7 +19,7 @@ sys.path.insert(0, '/ovi')
 from ovi.ovi_fusion_engine import OviFusionEngine
 from ovi.utils.io_utils import save_video
 
-print("[INIT] Starting Ovi 1.1 initialization...")
+print("[INIT] Starting Ovi initialization...")
 
 os.makedirs('/tmp/ovi_output', exist_ok=True)
 
@@ -43,15 +38,13 @@ device = 0
 torch.cuda.set_device(device)
 print(f"[INIT] GPU: {torch.cuda.get_device_name(device)}")
 
-# ⭐ SMART PATH SELECTION ⭐
 if os.path.ismount('/mnt/models') and os.path.exists('/mnt/models/ovi_models'):
     model_path = '/mnt/models/ovi_models'
-    print("[INIT] Using Network Volume at /mnt/models/ovi_models ✅")
+    print("[INIT] Using Network Volume ✅")
 else:
     model_path = '/root/.cache/ovi_models'
-    print("[INIT] Network Volume not attached, using local cache ⚠️")
+    print("[INIT] Using local cache ⚠️")
 
-# STEP 1: Check if models exist
 weights_exist = (
     os.path.exists(f'{model_path}/Ovi') and
     os.path.exists(f'{model_path}/Wan2.2-TI2V-5B') and
@@ -59,42 +52,20 @@ weights_exist = (
 )
 
 if not weights_exist:
-    print(f"[INIT] Models not found at {model_path}")
-    print(f"[INIT] Downloading (~30GB, takes 10-15 minutes on first run)...")
-    
-    try:
-        result = os.system(f"cd /ovi && python3 download_weights.py --output-dir {model_path}")
-        if result != 0:
-            print(f"[ERROR] Download failed with code {result}")
-            sys.exit(1)
-        print("[INIT] ✅ Model weights downloaded successfully!")
-    except Exception as e:
-        print(f"[ERROR] Download failed: {str(e)}")
+    print(f"[INIT] Downloading models...")
+    result = os.system(f"cd /ovi && python3 download_weights.py --output-dir {model_path}")
+    if result != 0:
+        print(f"[ERROR] Download failed")
         sys.exit(1)
+    print("[INIT] Models downloaded")
 else:
-    print("[INIT] Models already cached - using existing weights ✅")
+    print("[INIT] Models cached ✅")
 
-# STEP 2: Verify all models exist
-required_models = {
-    'Ovi checkpoint': f'{model_path}/Ovi',
-    'Wan 2.2': f'{model_path}/Wan2.2-TI2V-5B',
-    'MMAudio': f'{model_path}/MMAudio'
-}
-
-for model_name, model_path_check in required_models.items():
-    if not os.path.exists(model_path_check):
-        print(f"[ERROR] Missing {model_name} at {model_path_check}")
-        sys.exit(1)
-
-print("[INIT] ✅ All model files verified")
-
-# STEP 3: Load OVI config
-print("[INIT] Loading Ovi config...")
+print("[INIT] Loading OVI config...")
+# NOTE: DO NOT include video_frame_height_width in config - pass it to generate() instead
 config = OmegaConf.create({
     'ckpt_dir': model_path,
     'output_dir': '/tmp/ovi_output',
-    'video_frame_height_width': [720, 720],
-    'num_steps': 50,
     'solver_name': 'unipc',
     'shift': 5.0,
     'video_guidance_scale': 4.0,
@@ -107,61 +78,86 @@ config = OmegaConf.create({
     'seed': 100
 })
 
-print("[INIT] Loading OVI Fusion Engine...")
+print("[INIT] Loading OVI Engine...")
 try:
     ovi_engine = OviFusionEngine(
         config=config,
         device=device,
         target_dtype=torch.bfloat16
     )
-    print("[INIT] ✅ OVI Fusion Engine loaded successfully!")
+    print("[INIT] ✅ OVI loaded!")
 except Exception as e:
-    print(f"[ERROR] Failed to load Ovi engine: {str(e)}")
+    print(f"[ERROR] Load failed: {str(e)}")
     print(traceback.format_exc())
     sys.exit(1)
 
-print("[INIT] ✅ Ready to process requests")
+print("[INIT] ✅ Ready!")
 
 # ==================== HANDLER ====================
 
 def handler(job):
-    """RunPod Serverless handler"""
+    """RunPod handler - VERIFIED against official inference.py"""
     try:
         job_input = job['input']
-        prompt = job_input.get('prompt')
+        text_prompt = job_input.get('prompt', '')
         
-        if not prompt:
+        if not text_prompt:
             return {"status": "error", "message": "Prompt required"}
         
-        # Generate video
+        print(f"[JOB] Text prompt: {text_prompt}")
+        
         try:
-            output = ovi_engine.generate(
-                prompt=prompt,
-                num_steps=50,
-                seed=100
+            # EXACT parameters from inference.py lines 94-107
+            generated_video, generated_audio, generated_image = ovi_engine.generate(
+                text_prompt=text_prompt,                    # ✅ Verified
+                image_path=None,                             # ✅ For T2V mode
+                video_frame_height_width=[720, 720],        # ✅ Verified - pass here, not in config
+                seed=100,                                    # ✅ Verified
+                solver_name='unipc',                         # ✅ Verified
+                sample_steps=50,                             # ✅ Verified (NOT num_steps)
+                shift=5.0,                                   # ✅ Verified
+                video_guidance_scale=4.0,                   # ✅ Verified
+                audio_guidance_scale=3.0,                   # ✅ Verified
+                slg_layer=11,                                # ✅ Verified
+                video_negative_prompt='',                   # ✅ Verified
+                audio_negative_prompt=''                    # ✅ Verified
             )
+            
+            print(f"[JOB] Video generated")
+            
+            # EXACT save_video call from inference.py line 109
             output_path = '/tmp/ovi_output/output.mp4'
-            save_video(output, output_path)
+            save_video(output_path, generated_video, generated_audio, fps=24, sample_rate=16000)
+            
+            print(f"[JOB] Video saved to {output_path}")
+            
         except Exception as e:
-            return {"status": "error", "message": f"Generation failed: {str(e)}"}
+            print(f"[ERROR] Generation failed: {str(e)}")
+            print(traceback.format_exc())
+            return {"status": "error", "message": f"Generation: {str(e)}"}
         
         # Upload to Cloudinary
         try:
+            print(f"[JOB] Uploading to Cloudinary...")
             upload_result = cloudinary.uploader.upload(
                 output_path,
                 resource_type="video",
                 public_id=f"ovi_{uuid.uuid4()}"
             )
             
+            print(f"[JOB] ✅ Success")
             return {
                 "status": "success",
                 "video_url": upload_result['secure_url'],
                 "duration": upload_result.get('duration', 'N/A')
             }
         except Exception as e:
-            return {"status": "error", "message": f"Upload failed: {str(e)}"}
+            print(f"[ERROR] Upload failed: {str(e)}")
+            return {"status": "error", "message": f"Upload: {str(e)}"}
         
     except Exception as e:
+        print(f"[ERROR] Handler exception: {str(e)}")
+        print(traceback.format_exc())
         return {"status": "error", "message": str(e)}
 
 runpod.serverless.start({"handler": handler})
