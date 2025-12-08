@@ -1,29 +1,21 @@
+import runpod
 import os
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-os.environ['PYTHONUNBUFFERED'] = '1'
-
-import sys
+import torch
 import json
-import uuid
+import logging
 import traceback
 from pathlib import Path
-
-import torch
-import runpod
-from PIL import Image
+from datetime import datetime
 import cloudinary
 import cloudinary.uploader
-from omegaconf import OmegaConf
+import cloudinary.api
+import subprocess
+import tempfile
+from typing import Dict, Any, Optional
 
-sys.path.insert(0, '/ovi')
-
-from ovi.ovi_fusion_engine import OviFusionEngine
-from ovi.utils.io_utils import save_video
-
-print("[INIT] Starting Ovi 1.1 initialization...")
-
-# Create output directory
-os.makedirs('/tmp/ovi_output', exist_ok=True)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Configure Cloudinary
 cloudinary.config(
@@ -31,177 +23,351 @@ cloudinary.config(
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
     api_secret=os.environ.get('CLOUDINARY_API_SECRET')
 )
-print("[INIT] ✅ Cloudinary configured")
 
-# Check GPU
-if not torch.cuda.is_available():
-    print("[ERROR] No GPU available!")
-    sys.exit(1)
+class OviVideoGenerator:
+    def __init__(self):
+        """Initialize Ovi model and dependencies"""
+        self.model_initialized = False
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Device: {self.device}")
+        logger.info(f"CUDA Available: {torch.cuda.is_available()}")
+        
+        if torch.cuda.is_available():
+            logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
+            logger.info(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        
+        try:
+            self._initialize_model()
+            self.model_initialized = True
+            logger.info("✓ Ovi model initialized successfully")
+        except Exception as e:
+            logger.error(f"✗ Model initialization failed: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
 
-device = 0
-torch.cuda.set_device(device)
-gpu_name = torch.cuda.get_device_name(device)
-gpu_memory = torch.cuda.get_device_properties(device).total_memory / 1e9
-print(f"[INIT] GPU: {gpu_name} ({gpu_memory:.1f}GB)")
+    def _initialize_model(self):
+        """Load Ovi 1.1 model from local storage"""
+        try:
+            # Import Ovi dependencies
+            import sys
+            sys.path.insert(0, '/ovi')
+            
+            from ovi.models.diffusion import DiT
+            from ovi.utils.inference import OviInference
+            
+            # Load model configuration
+            self.config = {
+                'num_steps': 30,  # Optimized for RTX 5090
+                'solver_name': 'unipc',
+                'shift': 5.0,
+                'audio_guidance_scale': 3.0,
+                'video_guidance_scale': 4.0,
+                'slg_layer': 11,
+                'sp_size': 1,
+                'seed': 42,
+                'cp_size': 1,
+                'cpu_offload': False,
+                'fp8': False,
+            }
+            
+            # Initialize inference engine
+            self.ovi_engine = OviInference(
+                model_path='/models/ovi-1-1',
+                config=self.config,
+                device=self.device
+            )
+            
+            logger.info("Ovi engine initialized")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Ovi: {str(e)}")
+            raise
 
-# Determine model path (Network Volume or local cache)
-if os.path.ismount('/mnt/models') and os.path.exists('/mnt/models/ovi_models'):
-    model_path = '/mnt/models/ovi_models'
-    print("[INIT] Using Network Volume at /mnt/models/ovi_models")
-else:
-    model_path = '/root/.cache/ovi_models'
-    print("[INIT] Using local cache at /root/.cache/ovi_models")
+    def generate_video(
+        self,
+        prompt: str,
+        duration: int = 10,
+        image_url: Optional[str] = None,
+        seed: Optional[int] = None,
+        num_steps: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate video using Ovi 1.1
+        
+        Args:
+            prompt: Text description for video generation
+            duration: 5 or 10 seconds (default: 10)
+            image_url: Optional image URL for I2V mode
+            seed: Random seed for reproducibility
+            num_steps: Custom number of denoising steps
+            
+        Returns:
+            Dict with video path and metadata
+        """
+        
+        if not self.model_initialized:
+            raise RuntimeError("Model not initialized")
+        
+        # Validate inputs
+        if not prompt or len(prompt.strip()) == 0:
+            raise ValueError("Prompt cannot be empty")
+        
+        if duration not in [5, 10]:
+            raise ValueError("Duration must be 5 or 10 seconds")
+        
+        if len(prompt) > 500:
+            raise ValueError("Prompt exceeds 500 character limit")
+        
+        try:
+            logger.info(f"Generating {duration}s video from prompt: {prompt[:50]}...")
+            
+            # Prepare inference config
+            inference_config = self.config.copy()
+            if seed is not None:
+                inference_config['seed'] = seed
+            if num_steps is not None:
+                inference_config['num_steps'] = num_steps
+            
+            # Determine mode
+            mode = "i2v" if image_url else "t2v"
+            
+            # Download image if I2V mode
+            image_data = None
+            if mode == "i2v":
+                logger.info(f"I2V Mode: Downloading image from {image_url}")
+                image_data = self._download_image(image_url)
+            
+            # Generate video
+            if duration == 5:
+                video_output = self.ovi_engine.generate_5s(
+                    prompt=prompt,
+                    image=image_data,
+                    **inference_config
+                )
+            else:  # 10 seconds
+                video_output = self.ovi_engine.generate_10s(
+                    prompt=prompt,
+                    image=image_data,
+                    **inference_config
+                )
+            
+            logger.info("Video generation completed")
+            
+            return {
+                'status': 'success',
+                'video_path': video_output,
+                'mode': mode,
+                'duration': duration,
+                'prompt': prompt
+            }
+            
+        except Exception as e:
+            logger.error(f"Video generation failed: {str(e)}")
+            raise
 
-# Create model directory if needed
-Path(model_path).mkdir(parents=True, exist_ok=True)
+    def _download_image(self, image_url: str) -> Optional[str]:
+        """Download image from URL for I2V processing"""
+        try:
+            import urllib.request
+            from PIL import Image
+            
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                urllib.request.urlretrieve(image_url, tmp.name)
+                # Validate image
+                Image.open(tmp.name)
+                logger.info(f"Image downloaded: {tmp.name}")
+                return tmp.name
+                
+        except Exception as e:
+            logger.error(f"Image download failed: {str(e)}")
+            raise ValueError(f"Failed to download image: {str(e)}")
 
-# Check if models exist
-weights_exist = (
-    os.path.exists(f'{model_path}/Ovi') and
-    os.path.exists(f'{model_path}/Wan2.2-TI2V-5B') and
-    os.path.exists(f'{model_path}/MMAudio')
-)
+    def upload_to_cloudinary(
+        self,
+        video_path: str,
+        prompt: str,
+        duration: int,
+        mode: str
+    ) -> Dict[str, Any]:
+        """Upload generated video to Cloudinary"""
+        
+        try:
+            logger.info(f"Uploading video to Cloudinary: {video_path}")
+            
+            # Create public_id for organization
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            public_id = f"ovi-{mode}-{duration}s-{timestamp}"
+            
+            # Upload with optimizations
+            response = cloudinary.uploader.upload(
+                video_path,
+                resource_type='video',
+                public_id=public_id,
+                folder='ovi-videos',
+                tags=['ovi_generated', f'ovi_{mode}', f'{duration}s'],
+                overwrite=False,
+                timeout=300,  # 5 minute timeout for upload
+                # Optimization options
+                eager=[
+                    {'quality': 'auto', 'fetch_format': 'auto'}
+                ],
+                # Metadata
+                context={
+                    'prompt': prompt[:100],
+                    'mode': mode,
+                    'duration': str(duration)
+                }
+            )
+            
+            logger.info(f"✓ Upload successful: {response['secure_url']}")
+            
+            return {
+                'status': 'success',
+                'url': response['secure_url'],
+                'public_id': response['public_id'],
+                'secure_url': response['secure_url'],
+                'video_id': response['public_id'],
+                'cloudinary_response': {
+                    'size': response.get('bytes'),
+                    'duration': response.get('duration'),
+                    'format': response.get('format')
+                }
+            }
+            
+        except cloudinary.exceptions.Error as e:
+            logger.error(f"Cloudinary upload failed: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Upload error: {str(e)}")
+            raise
 
-if not weights_exist:
-    print("[INIT] ⏳ Model weights not found. Downloading (~30GB, may take 10-15 minutes)...")
-    from huggingface_hub import snapshot_download
-    try:
-        for model_id, local_dir in [
-            ('chetwinlow1/Ovi', f'{model_path}/Ovi'),
-            ('Wan-AI/Wan2.2-TI2V-5B', f'{model_path}/Wan2.2-TI2V-5B'),
-            ('hkchengrex/MMAudio', f'{model_path}/MMAudio'),
-        ]:
-            print(f"[INIT] Downloading {model_id}...")
-            snapshot_download(model_id, local_dir=local_dir, local_dir_use_symlinks=False)
-            print(f"[INIT] ✅ Downloaded {model_id}")
-        print("[INIT] ✅ All models downloaded")
-    except Exception as e:
-        print(f"[ERROR] Download failed: {str(e)}")
-        sys.exit(1)
-else:
-    print("[INIT] ✅ Model weights cached")
+    def cleanup(self, video_path: str):
+        """Clean up temporary files"""
+        try:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+                logger.info(f"Cleaned up: {video_path}")
+        except Exception as e:
+            logger.warning(f"Cleanup error: {str(e)}")
 
-# Load OVI config - EXACTLY as per official code
-print("[INIT] Loading OVI config...")
-config = OmegaConf.create({
-    'ckpt_dir': model_path,
-    'output_dir': '/tmp/ovi_output',
-    'cpu_offload': True,  # CRITICAL for 24GB VRAM
-    'mode': 't2v'         # Text-to-video mode
-})
 
-# Initialize OVI engine - EXACTLY as per official code
-print("[INIT] Loading OVI Fusion Engine (this may take 2-3 minutes)...")
+# Initialize generator once
 try:
-    ovi_engine = OviFusionEngine(
-        config=config,
-        device=device,
-        target_dtype=torch.bfloat16
-    )
-    print("[INIT] ✅ OVI Engine loaded successfully!")
+    generator = OviVideoGenerator()
 except Exception as e:
-    print(f"[ERROR] Failed to load OVI engine: {str(e)}")
-    print(traceback.format_exc())
-    sys.exit(1)
+    logger.error(f"Failed to initialize generator: {str(e)}")
+    generator = None
 
-print("[INIT] ✅ System ready for inference!")
 
-# ==================== HANDLER ====================
-
-def handler(job):
-    """RunPod serverless handler for OVI 1.1"""
-    job_id = job.get('id', 'unknown')
-    print(f"\n[JOB {job_id}] Starting...")
+def handler(job: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    RunPod serverless handler function
+    
+    Input format:
+    {
+        "input": {
+            "prompt": "A cat dancing",
+            "duration": 10,  # 5 or 10 seconds (default: 10)
+            "image_url": "https://...",  # Optional for I2V
+            "seed": 42,  # Optional
+            "num_steps": 30  # Optional
+        }
+    }
+    
+    Output format:
+    {
+        "status": "success",
+        "video_url": "https://cloudinary.com/...",
+        "video_id": "ovi-t2v-10s-...",
+        "mode": "t2v" or "i2v",
+        "duration": 10,
+        "generation_time_seconds": 45.2,
+        "metadata": {...}
+    }
+    """
+    
+    job_input = job.get('input', {})
+    start_time = datetime.now()
     
     try:
-        job_input = job['input']
-        text_prompt = job_input.get('prompt', '')
-        seed = job_input.get('seed', 100)
-        num_steps = job_input.get('num_steps', 50)
-        image_url = job_input.get('image_url', None)
+        # Validate generator
+        if generator is None:
+            return {
+                'status': 'error',
+                'error': 'Model initialization failed',
+                'message': 'Ovi model failed to initialize. Check worker logs.'
+            }
         
-        if not text_prompt:
-            return {"status": "error", "message": "Prompt is required"}
+        # Extract and validate inputs
+        prompt = job_input.get('prompt', '').strip()
+        duration = job_input.get('duration', 10)
+        image_url = job_input.get('image_url')
+        seed = job_input.get('seed')
+        num_steps = job_input.get('num_steps')
         
-        print(f"[JOB {job_id}] Prompt: {text_prompt}")
-        print(f"[JOB {job_id}] Steps: {num_steps}, Seed: {seed}")
+        if not prompt:
+            return {'status': 'error', 'error': 'Prompt is required'}
         
-        try:
-            # EXACT signature from official OviFusionEngine.generate()
-            generated_video, generated_audio, generated_image = ovi_engine.generate(
-                text_prompt=text_prompt,
-                image_path=image_url,  # None for T2V, path string for I2V
-                video_frame_height_width=[960, 960],  # OFFICIAL: must be [h, w]
-                seed=seed,
-                solver_name='unipc',
-                sample_steps=num_steps,  # OFFICIAL param name
-                shift=5.0,
-                video_guidance_scale=5.0,  # OFFICIAL default
-                audio_guidance_scale=4.0,  # OFFICIAL default
-                slg_layer=9,  # OFFICIAL default
-                video_negative_prompt='',
-                audio_negative_prompt=''
-            )
-            
-            if generated_video is None:
-                return {"status": "error", "message": "Generation returned None"}
-            
-            print(f"[JOB {job_id}] ✅ Video generated")
-            
-        except Exception as e:
-            print(f"[JOB {job_id}] ❌ Generation failed: {str(e)}")
-            print(traceback.format_exc())
-            return {"status": "error", "message": f"Generation: {str(e)}"}
+        logger.info(f"Processing job: prompt='{prompt[:50]}...', duration={duration}s, mode={'i2v' if image_url else 't2v'}")
         
-        # Save video
-        try:
-            output_path = f'/tmp/ovi_output/output_{uuid.uuid4()}.mp4'
-            print(f"[JOB {job_id}] Saving video...")
-            save_video(output_path, generated_video, generated_audio, fps=24, sample_rate=16000)
-            print(f"[JOB {job_id}] ✅ Video saved")
-            
-        except Exception as e:
-            print(f"[JOB {job_id}] ❌ Save failed: {str(e)}")
-            print(traceback.format_exc())
-            return {"status": "error", "message": f"Save: {str(e)}"}
+        # Generate video
+        gen_result = generator.generate_video(
+            prompt=prompt,
+            duration=duration,
+            image_url=image_url,
+            seed=seed,
+            num_steps=num_steps
+        )
         
         # Upload to Cloudinary
-        try:
-            print(f"[JOB {job_id}] Uploading to Cloudinary...")
-            upload_result = cloudinary.uploader.upload(
-                output_path,
-                resource_type="video",
-                public_id=f"ovi_{uuid.uuid4()}",
-                timeout=600
-            )
-            
-            print(f"[JOB {job_id}] ✅ Upload successful")
-            
-            try:
-                os.remove(output_path)
-            except:
-                pass
-            
-            return {
-                "status": "success",
-                "video_url": upload_result.get('secure_url'),
-                "public_id": upload_result.get('public_id'),
-                "duration": upload_result.get('duration')
-            }
-            
-        except Exception as e:
-            print(f"[JOB {job_id}] ⚠️ Cloudinary failed: {str(e)}")
-            return {
-                "status": "success_local",
-                "message": "Generated but Cloudinary upload failed",
-                "error": str(e),
-                "local_path": output_path
-            }
+        upload_result = generator.upload_to_cloudinary(
+            video_path=gen_result['video_path'],
+            prompt=prompt,
+            duration=duration,
+            mode=gen_result['mode']
+        )
         
+        # Cleanup
+        generator.cleanup(gen_result['video_path'])
+        
+        # Calculate generation time
+        generation_time = (datetime.now() - start_time).total_seconds()
+        
+        # Return success response
+        return {
+            'status': 'success',
+            'video_url': upload_result['url'],
+            'video_id': upload_result['video_id'],
+            'secure_url': upload_result['secure_url'],
+            'mode': gen_result['mode'],
+            'duration': duration,
+            'generation_time_seconds': round(generation_time, 2),
+            'cloudinary_metadata': upload_result['cloudinary_response'],
+            'prompt': prompt
+        }
+        
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        return {
+            'status': 'error',
+            'error_type': 'validation_error',
+            'message': str(e)
+        }
     except Exception as e:
-        print(f"[JOB {job_id}] ❌ Handler exception: {str(e)}")
-        print(traceback.format_exc())
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Handler error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            'status': 'error',
+            'error_type': 'generation_error',
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }
 
-print("[INIT] Starting RunPod serverless handler...")
-runpod.serverless.start({"handler": handler})
+
+# Start serverless worker
+if __name__ == '__main__':
+    logger.info("Starting Ovi RunPod serverless worker...")
+    runpod.serverless.start({
+        'handler': handler,
+        'return_aggregate_stream': False,  # Streaming disabled for binary video
+    })
