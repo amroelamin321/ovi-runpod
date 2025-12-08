@@ -1,20 +1,60 @@
-.env
-.env.local
-secrets.txt
-/root/.cache/
-*.safetensors
-*.pt
-*.bin
-/tmp/ovi_output/
-/output/
-*.mp4
-*.wav
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-env/
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 venv/
-.venv
-.DS_Store
-.idea/
+ENV/
+env/
+
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model weights (don't commit large files)
+models/
+*.safetensors
+*.bin
+*.ckpt
+*.pth
+
+# Test outputs
+output/
+*.mp4
+*.avi
+*.mov
+
+# Secrets (NEVER commit these)
+secrets.yaml
+credentials.json
