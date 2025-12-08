@@ -31,7 +31,7 @@ RUN pip install --upgrade pip setuptools wheel
 
 WORKDIR /workspace
 
-# Install PyTorch 2.1.0 (compatible with RTX 6000 Ada)
+# Install PyTorch 2.1.0
 RUN pip install --no-cache-dir torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0
 
 # Install core ML packages
@@ -61,24 +61,12 @@ RUN pip install --no-cache-dir \
 # Clone Ovi repository
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
-# Download models (commented out for now - will check if models exist at runtime)
-RUN mkdir -p /models && python -c "\
-import huggingface_hub; \
-print('Downloading Ovi models...'); \
-try: \
-    huggingface_hub.snapshot_download('character-ai/Ovi-1.1', \
-        cache_dir='/models/.cache', \
-        local_dir='/models/ovi-1.1', \
-        allow_patterns=['*.safetensors', '*.json', '*.yaml'], \
-        resume_download=True); \
-    print('✓ Downloaded'); \
-except Exception as e: \
-    print(f'Model download will happen at runtime: {e}')"
-
-COPY handler.py /workspace/handler.py
-COPY config/ /workspace/config/
-
+# Create directories (models will be downloaded at runtime)
 RUN mkdir -p /models /workspace /tmp/video-output && \
     chmod 777 /models /workspace /tmp/video-output
+
+# Copy handler and config
+COPY handler.py /workspace/handler.py
+COPY config/ /workspace/config/
 
 CMD ["python", "-u", "/workspace/handler.py"]
