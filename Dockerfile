@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
-
 RUN pip install --upgrade pip setuptools wheel
 
 WORKDIR /workspace
@@ -26,44 +25,38 @@ WORKDIR /workspace
 # Clone Ovi
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
-# Install base packages
+# Install deps
 COPY requirements.txt /workspace/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
-# Install moviepy separately (avoids conflicts)
-RUN pip install --no-cache-dir moviepy==1.0.3 || \
-    pip install --no-cache-dir moviepy || \
-    echo "moviepy will be handled at runtime"
+# Set HF token if provided (optional but recommended)
+ARG HF_TOKEN
+ENV HF_TOKEN=${HF_TOKEN}
 
-# Verify core packages
-RUN python -c "import torch; print(f'torch: {torch.__version__}')"
-RUN python -c "import diffusers; print(f'diffusers: {diffusers.__version__}')"
-RUN python -c "import transformers; print(f'transformers: {transformers.__version__}')"
+# Download ALL models - THIS HAPPENS IN BUILD
+RUN cd /workspace/ovi && \
+    python download_weights.py --output-dir /workspace/ckpts && \
+    ls -lh /workspace/ckpts/ && \
+    du -sh /workspace/ckpts/ && \
+    echo "✓ Models downloaded and verified"
 
-# Create models directory
-RUN mkdir -p /models /tmp/video-output
+# Verify everything works
+RUN python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
+RUN python -c "from diffusers import FluxPipeline; print('FluxPipeline OK')"
+RUN python -c "from moviepy.editor import ImageSequenceClip; print('Moviepy OK')"
+RUN python -c "import sys; sys.path.insert(0, '/workspace/ovi'); from ovi.utils.io_utils import save_video; print('Ovi imports OK')"
 
-# Download models (lightweight script)
-RUN python -c "\
-from huggingface_hub import snapshot_download; \
-import os; \
-print('Downloading models...'); \
-try: \
-    snapshot_download('character-ai/Ovi', local_dir='/models/ovi', cache_dir='/models/.cache', resume_download=True); \
-    print('Models downloaded'); \
-except Exception as e: \
-    print(f'Warning: {e}'); \
-"
+# Verify checkpoints exist
+RUN test -d /workspace/ckpts || (echo "ERROR: Checkpoints not found!" && exit 1)
+RUN find /workspace/ckpts -name "*.safetensors" | head -3 || (echo "WARNING: No safetensors found")
 
-# Copy handler
 COPY handler.py /workspace/handler.py
 
-# Environment
+RUN mkdir -p /tmp/video-output
+
 ENV PYTHONPATH="/workspace/ovi:${PYTHONPATH}"
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/models/.cache
-ENV TRANSFORMERS_CACHE=/models/.cache
 
-RUN echo "Container ready"
+RUN echo "🚀 Build complete - Models ready at /workspace/ckpts 🚀"
 
 CMD ["python", "-u", "handler.py"]
