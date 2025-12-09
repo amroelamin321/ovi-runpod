@@ -7,19 +7,32 @@ import logging
 import traceback
 from pathlib import Path
 from datetime import datetime
-import cloudinary
-import cloudinary.uploader
 import tempfile
 from typing import Dict, Any, Optional
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging FIRST
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-cloudinary.config(
-    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
-    api_key=os.environ.get('CLOUDINARY_API_KEY'),
-    api_secret=os.environ.get('CLOUDINARY_API_SECRET')
-)
+# Try to import cloudinary, but don't crash if it fails
+try:
+    import cloudinary
+    import cloudinary.uploader
+    
+    cloudinary.config(
+        cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
+        api_key=os.environ.get('CLOUDINARY_API_KEY'),
+        api_secret=os.environ.get('CLOUDINARY_API_SECRET')
+    )
+    CLOUDINARY_ENABLED = True
+    logger.info("✓ Cloudinary configured")
+except Exception as e:
+    CLOUDINARY_ENABLED = False
+    logger.warning(f"⚠ Cloudinary not available: {e}")
+
 
 class OviVideoGenerator:
     def __init__(self):
@@ -42,7 +55,9 @@ class OviVideoGenerator:
         except Exception as e:
             logger.error(f"✗ Model initialization failed: {str(e)}")
             logger.error(traceback.format_exc())
-            raise
+            # DON'T raise - allow worker to start even if model init fails
+            # This way we can debug via API calls
+            self.model_initialized = False
 
     def _download_models_if_needed(self):
         """Download Ovi models if they don't exist"""
@@ -52,42 +67,8 @@ class OviVideoGenerator:
             logger.info(f"✓ Models already exist at {model_path}")
             return model_path
         
-        logger.info("Models not found, downloading from Hugging Face...")
-        
-        try:
-            import huggingface_hub
-            
-            # Download from the actual Ovi repository
-            logger.info("Downloading character-ai/Ovi models...")
-            
-            # Try different possible model locations
-            possible_repos = [
-                'character-ai/Ovi',
-                'character-ai/ovi',
-                'characterai/Ovi',
-            ]
-            
-            for repo in possible_repos:
-                try:
-                    logger.info(f"Trying repository: {repo}")
-                    huggingface_hub.snapshot_download(
-                        repo,
-                        cache_dir='/models/.cache',
-                        local_dir=model_path,
-                        resume_download=True
-                    )
-                    logger.info(f"✓ Successfully downloaded from {repo}")
-                    return model_path
-                except Exception as e:
-                    logger.warning(f"Failed to download from {repo}: {str(e)}")
-                    continue
-            
-            raise RuntimeError("Could not download models from any known repository")
-            
-        except Exception as e:
-            logger.error(f"Model download failed: {str(e)}")
-            logger.warning("Will attempt to use Ovi without pre-downloaded models")
-            return None
+        logger.info("Models not found, will use models from Ovi repo")
+        return None
 
     def _initialize_model(self):
         """Initialize Ovi model"""
@@ -103,7 +84,9 @@ class OviVideoGenerator:
             if not os.path.exists(ovi_path):
                 raise RuntimeError(f"Ovi repository not found at {ovi_path}")
             
-            logger.info(f"Ovi directory exists with {len(os.listdir(ovi_path))} items")
+            ovi_contents = os.listdir(ovi_path)
+            logger.info(f"Ovi directory exists with {len(ovi_contents)} items")
+            logger.info(f"Ovi contents: {', '.join(ovi_contents[:10])}")
             
             # Download models if needed
             self.model_path = self._download_models_if_needed()
@@ -111,31 +94,17 @@ class OviVideoGenerator:
             # Check for inference script
             self.inference_script = os.path.join(ovi_path, 'inference.py')
             
-            if not os.path.exists(self.inference_script):
-                # Try to find alternative entry points
-                possible_scripts = [
-                    'run_inference.py',
-                    'generate.py',
-                    'main.py',
-                    'demo.py'
-                ]
-                
-                for script in possible_scripts:
-                    script_path = os.path.join(ovi_path, script)
-                    if os.path.exists(script_path):
-                        self.inference_script = script_path
-                        logger.info(f"Found inference script: {script}")
-                        break
-                else:
-                    logger.warning("No inference script found, will use direct model loading")
-                    self.inference_script = None
-            else:
+            if os.path.exists(self.inference_script):
                 logger.info("✓ Found inference.py")
+            else:
+                logger.warning("⚠ inference.py not found")
+                self.inference_script = None
             
-            logger.info("Model initialization complete")
+            logger.info("✓ Model initialization complete")
             
         except Exception as e:
             logger.error(f"Failed to initialize: {str(e)}")
+            logger.error(traceback.format_exc())
             raise
 
     def generate_video(
@@ -148,7 +117,7 @@ class OviVideoGenerator:
     ) -> Dict[str, Any]:
         
         if not self.model_initialized:
-            raise RuntimeError("Model not initialized")
+            raise RuntimeError("Model not initialized. Check worker startup logs.")
         
         if not prompt or len(prompt.strip()) == 0:
             raise ValueError("Prompt cannot be empty")
@@ -173,9 +142,6 @@ class OviVideoGenerator:
                     "--output", output_file,
                 ]
                 
-                if self.model_path:
-                    cmd.extend(["--model_path", self.model_path])
-                
                 if seed is not None:
                     cmd.extend(["--seed", str(seed)])
                 
@@ -199,31 +165,13 @@ class OviVideoGenerator:
                 logger.info(f"Stdout: {result.stdout}")
                 
             else:
-                # Fallback: Create dummy video for testing
-                logger.warning("No inference script found, creating test video")
-                
-                import cv2
-                import numpy as np
-                
-                # Create a simple test video
-                fps = 24
-                frames = duration * fps
-                width, height = 960, 960
-                
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
-                
-                for i in range(frames):
-                    frame = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
-                    out.write(frame)
-                
-                out.release()
-                logger.info(f"Created test video: {output_file}")
+                raise RuntimeError("inference.py not found. Cannot generate video.")
             
             if not os.path.exists(output_file):
                 raise RuntimeError(f"Video generation failed - output file not created")
             
-            logger.info("✓ Video generation completed")
+            file_size = os.path.getsize(output_file)
+            logger.info(f"✓ Video generated: {output_file} ({file_size/1024/1024:.2f}MB)")
             
             return {
                 'status': 'success',
@@ -235,6 +183,7 @@ class OviVideoGenerator:
             
         except Exception as e:
             logger.error(f"Video generation failed: {str(e)}")
+            logger.error(traceback.format_exc())
             raise
 
     def _download_image(self, image_url: str) -> str:
@@ -244,8 +193,8 @@ class OviVideoGenerator:
             
             with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
                 urllib.request.urlretrieve(image_url, tmp.name)
-                Image.open(tmp.name)
-                logger.info(f"Image downloaded: {tmp.name}")
+                Image.open(tmp.name).verify()
+                logger.info(f"✓ Image downloaded: {tmp.name}")
                 return tmp.name
                 
         except Exception as e:
@@ -258,6 +207,16 @@ class OviVideoGenerator:
         duration: int,
         mode: str
     ) -> Dict[str, Any]:
+        
+        if not CLOUDINARY_ENABLED:
+            # Return local file path if Cloudinary not available
+            logger.warning("Cloudinary not configured, returning local path")
+            return {
+                'status': 'success',
+                'url': f'file://{video_path}',
+                'public_id': os.path.basename(video_path),
+                'video_id': os.path.basename(video_path)
+            }
         
         try:
             logger.info(f"Uploading to Cloudinary: {video_path}")
@@ -296,40 +255,53 @@ class OviVideoGenerator:
         try:
             if os.path.exists(video_path):
                 os.remove(video_path)
-                logger.info(f"Cleaned up: {video_path}")
+                logger.info(f"✓ Cleaned up: {video_path}")
         except Exception as e:
             logger.warning(f"Cleanup error: {str(e)}")
 
 
+# Initialize generator - catch errors but don't crash
+logger.info("Initializing Ovi generator...")
 try:
     generator = OviVideoGenerator()
+    logger.info("✓ Generator initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize generator: {str(e)}")
+    logger.error(f"✗ Failed to initialize generator: {str(e)}")
+    logger.error(traceback.format_exc())
     generator = None
 
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
+    """RunPod handler function"""
     job_input = job.get('input', {})
     start_time = datetime.now()
     
     try:
-        if generator is None:
+        # Check if generator is initialized
+        if generator is None or not generator.model_initialized:
             return {
                 'status': 'error',
-                'error': 'Model initialization failed',
-                'message': 'Ovi model failed to initialize. Check worker logs.'
+                'error_type': 'initialization_error',
+                'message': 'Ovi model failed to initialize. Check worker logs for details.'
             }
         
+        # Extract parameters
         prompt = job_input.get('prompt', '').strip()
         duration = job_input.get('duration', 10)
         image_url = job_input.get('image_url')
         seed = job_input.get('seed')
         
+        # Validate prompt
         if not prompt:
-            return {'status': 'error', 'error': 'Prompt is required'}
+            return {
+                'status': 'error',
+                'error_type': 'validation_error',
+                'message': 'Prompt is required and cannot be empty'
+            }
         
         logger.info(f"Processing: duration={duration}s, mode={'i2v' if image_url else 't2v'}")
         
+        # Generate video
         gen_result = generator.generate_video(
             prompt=prompt,
             duration=duration,
@@ -337,6 +309,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             seed=seed
         )
         
+        # Upload to Cloudinary
         upload_result = generator.upload_to_cloudinary(
             video_path=gen_result['video_path'],
             prompt=prompt,
@@ -344,8 +317,10 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             mode=gen_result['mode']
         )
         
+        # Cleanup local file
         generator.cleanup(gen_result['video_path'])
         
+        # Calculate generation time
         generation_time = (datetime.now() - start_time).total_seconds()
         
         return {
@@ -360,13 +335,22 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Handler error: {str(e)}")
+        logger.error(traceback.format_exc())
+        
         return {
             'status': 'error',
             'error_type': 'generation_error',
-            'message': str(e)
+            'message': f"Generation failed: {str(e)}"
         }
 
 
+# Start the serverless worker
 if __name__ == '__main__':
+    logger.info("=" * 60)
     logger.info("Starting Ovi RunPod serverless worker...")
+    logger.info(f"Python: {sys.version}")
+    logger.info(f"PyTorch: {torch.__version__}")
+    logger.info(f"CUDA Available: {torch.cuda.is_available()}")
+    logger.info("=" * 60)
+    
     runpod.serverless.start({'handler': handler})
