@@ -29,17 +29,24 @@ WORKDIR /workspace
 # Clone Ovi repository
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
-# Copy requirements.txt and install dependencies
+# Copy requirements.txt
 COPY requirements.txt /workspace/requirements.txt
+
+# Install all dependencies from requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
-# Verify critical imports
-RUN python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
-RUN python -c "from diffusers import FluxPipeline; print('✓ FluxPipeline available')"
-RUN python -c "import transformers; print(f'✓ Transformers: {transformers.__version__}')"
-RUN python -c "import omegaconf; print('✓ OmegaConf OK')"
-RUN python -c "import pandas; print('✓ Pandas OK')"
-RUN python -c "import pydub; print('✓ Pydub OK')"
+# Verify ALL critical imports work
+RUN python -c "import torch; print(f'✓ PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')" && \
+    python -c "from diffusers import FluxPipeline; print('✓ FluxPipeline available')" && \
+    python -c "import transformers; print(f'✓ Transformers: {transformers.__version__}')" && \
+    python -c "import omegaconf; print('✓ OmegaConf')" && \
+    python -c "import pandas; print('✓ Pandas')" && \
+    python -c "import pydub; print('✓ Pydub')" && \
+    python -c "from moviepy.editor import ImageSequenceClip; print('✓ Moviepy')" && \
+    python -c "import librosa; print('✓ Librosa')" && \
+    python -c "import einops; print('✓ Einops')" && \
+    python -c "import timm; print('✓ Timm')" && \
+    echo "✓✓✓ ALL DEPENDENCIES VERIFIED ✓✓✓"
 
 # Copy handler
 COPY handler.py /workspace/handler.py
