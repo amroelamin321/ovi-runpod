@@ -1,67 +1,43 @@
-# ============================================
-# PYTORCH (CUDA 12.1 - Stable Version)
-# ============================================
-torch==2.2.0
-torchvision==0.17.0
-torchaudio==2.2.0
+# PyTorch (Exact version from Ovi repo)
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
 
-# ============================================
-# TRANSFORMERS & ML
-# ============================================
-transformers==4.38.0
-diffusers==0.27.0
-accelerate==0.27.0
-safetensors==0.4.2
-huggingface-hub==0.21.0
+# ML Frameworks
+transformers==4.47.0
+diffusers==0.32.0
+accelerate==1.2.0
+safetensors==0.4.5
+huggingface-hub==0.26.2
 
-# ============================================
-# OVI REQUIREMENTS
-# ============================================
+# Ovi Core
 omegaconf==2.3.0
-einops==0.7.0
-timm==0.9.16
-tensorboard==2.16.2
+einops==0.8.0
+timm==1.0.11
+tensorboard==2.18.0
 hydra-core==1.3.2
+pyyaml==6.0.2
 
-# ============================================
-# VIDEO PROCESSING
-# ============================================
-imageio==2.34.0
-imageio-ffmpeg==0.4.9
-Pillow==10.2.0
-opencv-python-headless==4.9.0.80
-
-# ============================================
-# AUDIO PROCESSING
-# ============================================
-librosa==0.10.1
+# Video/Audio
+imageio==2.36.1
+imageio-ffmpeg==0.5.1
+Pillow==11.0.0
+opencv-python-headless==4.10.0.84
+librosa==0.10.2
 soundfile==0.12.1
-scipy==1.12.0
-numba==0.59.0
+scipy==1.14.1
 pydub==0.25.1
+moviepy==1.0.3
 
-# ============================================
-# DATA PROCESSING
-# ============================================
-pandas==2.2.0
+# Data
+pandas==2.2.3
 numpy==1.26.4
 
-# ============================================
-# CLOUD & API
-# ============================================
-cloudinary==1.40.0
-runpod==1.6.2
+# Cloud
+cloudinary==1.41.0
+runpod==1.7.3
 
-# ============================================
-# UTILITIES
-# ============================================
-pyyaml==6.0.1
-tqdm==4.66.2
-requests==2.31.0
-
-# ============================================
-# MOVIEPY (Install separately to avoid conflicts)
-# ============================================
-decorator==5.1.1
-proglog==0.1.10
-
+# Utils
+tqdm==4.67.1
+requests==2.32.3
+fsspec==2024.10.0
