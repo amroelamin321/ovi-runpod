@@ -9,6 +9,7 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/models/.cache/huggingface \
     PYTHONPATH=/workspace:$PYTHONPATH
 
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3-pip \
@@ -31,42 +32,24 @@ RUN pip install --upgrade pip setuptools wheel
 
 WORKDIR /workspace
 
-# Install PyTorch 2.1.0
-RUN pip install --no-cache-dir torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0
-
-# Install core ML packages
-RUN pip install --no-cache-dir \
-    transformers==4.36.0 \
-    diffusers==0.25.0 \
-    accelerate==0.25.0 \
-    safetensors==0.4.1 \
-    huggingface-hub==0.20.1 \
-    einops==0.7.0 \
-    timm==0.9.12
-
-# Install Cloudinary and RunPod
-RUN pip install --no-cache-dir cloudinary==1.40.0 runpod==1.6.2
-
-# Install image/audio processing
-RUN pip install --no-cache-dir \
-    Pillow==10.1.0 \
-    opencv-python-headless==4.8.1.78 \
-    librosa==0.10.1 \
-    soundfile==0.12.1 \
-    audioread==3.0.1 \
-    numpy==1.24.3 \
-    scipy==1.11.4 \
-    pyyaml==6.0.1
-
-# Clone Ovi repository
+# Clone Ovi repository FIRST
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
-# Create directories (models will be downloaded at runtime)
+# Copy requirements.txt and install ALL dependencies
+COPY requirements.txt /workspace/requirements.txt
+RUN pip install --no-cache-dir -r /workspace/requirements.txt
+
+# Verify critical packages are installed
+RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
+RUN python -c "import omegaconf; print(f'OmegaConf: {omegaconf.__version__}')"
+RUN python -c "import diffusers; print(f'Diffusers: {diffusers.__version__}')"
+RUN python -c "import runpod; print(f'RunPod: {runpod.__version__}')"
+
+# Create directories
 RUN mkdir -p /models /workspace /tmp/video-output && \
     chmod 777 /models /workspace /tmp/video-output
 
 # Copy handler and config
 COPY handler.py /workspace/handler.py
-COPY config/ /workspace/config/
 
 CMD ["python", "-u", "/workspace/handler.py"]
