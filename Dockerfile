@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,48 +15,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Set python3.10 as default
+# Set python as default
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 
 # Upgrade pip
-RUN pip install --upgrade pip setuptools wheel
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Set working directory
 WORKDIR /workspace
 
-# Clone Ovi repository
+# Clone Ovi
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
-# Copy requirements.txt
+# Copy and install requirements
 COPY requirements.txt /workspace/requirements.txt
-
-# Install all dependencies from requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
-# Verify ALL critical imports work
-RUN python -c "import torch; print(f'✓ PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')" && \
-    python -c "from diffusers import FluxPipeline; print('✓ FluxPipeline available')" && \
-    python -c "import transformers; print(f'✓ Transformers: {transformers.__version__}')" && \
-    python -c "import omegaconf; print('✓ OmegaConf')" && \
-    python -c "import pandas; print('✓ Pandas')" && \
-    python -c "import pydub; print('✓ Pydub')" && \
-    python -c "from moviepy.editor import ImageSequenceClip; print('✓ Moviepy')" && \
-    python -c "import librosa; print('✓ Librosa')" && \
-    python -c "import einops; print('✓ Einops')" && \
-    python -c "import timm; print('✓ Timm')" && \
-    echo "✓✓✓ ALL DEPENDENCIES VERIFIED ✓✓✓"
+# Verify EVERYTHING works
+RUN python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print(f'✓ PyTorch {torch.__version__} with CUDA')"
+RUN python -c "from diffusers import FluxPipeline; print('✓ FluxPipeline available')"
+RUN python -c "import transformers; print(f'✓ Transformers {transformers.__version__}')"
+RUN python -c "from moviepy.editor import ImageSequenceClip, AudioFileClip; print('✓ Moviepy complete')"
+RUN python -c "import pandas, pydub, librosa, omegaconf, einops, timm; print('✓ All core libraries')"
+RUN python -c "import sys; sys.path.insert(0, '/workspace/ovi'); from ovi.utils.io_utils import save_video; print('✓ Ovi imports work')"
 
 # Copy handler
 COPY handler.py /workspace/handler.py
 
-# Create necessary directories
+# Create directories
 RUN mkdir -p /models /tmp/video-output
 
-# Set environment variables
+# Environment
 ENV PYTHONPATH="/workspace/ovi:${PYTHONPATH}"
 ENV PYTHONUNBUFFERED=1
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
 
-# Run handler
+# Health check
+RUN python -c "print('🚀 Container ready for Ovi video generation')"
+
 CMD ["python", "-u", "handler.py"]
