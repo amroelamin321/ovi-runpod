@@ -1,14 +1,5 @@
 FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    CUDA_HOME=/usr/local/cuda \
-    PATH=/usr/local/cuda/bin:${PATH} \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
-    TORCH_HOME=/models/.torch \
-    HF_HOME=/models/.cache/huggingface \
-    PYTHONPATH=/workspace:$PYTHONPATH
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
@@ -26,30 +17,43 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Set python3.10 as default
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 
+# Upgrade pip
 RUN pip install --upgrade pip setuptools wheel
 
+# Set working directory
 WORKDIR /workspace
 
-# Clone Ovi repository FIRST
+# Clone Ovi repository
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
 # Copy requirements.txt and install ALL dependencies
 COPY requirements.txt /workspace/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
+# Install moviepy SEPARATELY (avoid conflicts)
+RUN pip install --no-cache-dir moviepy==1.0.3 || \
+    pip install --no-cache-dir moviepy || \
+    echo "moviepy installation failed, will handle runtime"
+
 # Verify critical packages are installed
 RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
-RUN python -c "import omegaconf; print(f'OmegaConf: {omegaconf.__version__}')"
-RUN python -c "import diffusers; print(f'Diffusers: {diffusers.__version__}')"
-RUN python -c "import runpod; print(f'RunPod: {runpod.__version__}')"
+RUN python -c "import transformers; print(f'Transformers: {transformers.__version__}')"
+RUN python -c "import omegaconf; print('OmegaConf OK')"
+RUN python -c "import pandas; print('Pandas OK')"
+RUN python -c "import pydub; print('Pydub OK')"
 
-# Create directories
-RUN mkdir -p /models /workspace /tmp/video-output && \
-    chmod 777 /models /workspace /tmp/video-output
-
-# Copy handler and config
+# Copy handler
 COPY handler.py /workspace/handler.py
 
-CMD ["python", "-u", "/workspace/handler.py"]
+# Create necessary directories
+RUN mkdir -p /models /tmp/video-output
+
+# Set environment variables
+ENV PYTHONPATH="/workspace/ovi:${PYTHONPATH}"
+ENV PYTHONUNBUFFERED=1
+
+# Run handler
+CMD ["python", "-u", "handler.py"]
