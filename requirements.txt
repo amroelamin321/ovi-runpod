@@ -1,51 +1,50 @@
 # ============================================
-# CORE PYTORCH (PROVEN WORKING)
+# PYTORCH (CUDA 12.1 - Stable Version)
 # ============================================
-torch==2.1.0
-torchvision==0.16.0
-torchaudio==2.1.0
+torch==2.2.0
+torchvision==0.17.0
+torchaudio==2.2.0
 
 # ============================================
 # TRANSFORMERS & ML
 # ============================================
-transformers==4.36.0
-diffusers==0.30.0
-accelerate==0.25.0
-safetensors==0.4.1
-huggingface-hub==0.20.1
+transformers==4.38.0
+diffusers==0.27.0
+accelerate==0.27.0
+safetensors==0.4.2
+huggingface-hub==0.21.0
 
 # ============================================
 # OVI REQUIREMENTS
 # ============================================
 omegaconf==2.3.0
 einops==0.7.0
-timm==0.9.12
-tensorboard==2.15.1
+timm==0.9.16
+tensorboard==2.16.2
 hydra-core==1.3.2
 
 # ============================================
 # VIDEO PROCESSING
 # ============================================
-moviepy==1.0.3
 imageio==2.34.0
 imageio-ffmpeg==0.4.9
-Pillow==10.1.0
-opencv-python-headless==4.8.1.78
+Pillow==10.2.0
+opencv-python-headless==4.9.0.80
 
 # ============================================
 # AUDIO PROCESSING
 # ============================================
 librosa==0.10.1
 soundfile==0.12.1
-scipy==1.11.4
-numba==0.58.0
+scipy==1.12.0
+numba==0.59.0
 pydub==0.25.1
 
 # ============================================
 # DATA PROCESSING
 # ============================================
-pandas==2.0.3
-numpy==1.24.3
+pandas==2.2.0
+numpy==1.26.4
 
 # ============================================
 # CLOUD & API
@@ -57,5 +56,12 @@ runpod==1.6.2
 # UTILITIES
 # ============================================
 pyyaml==6.0.1
-tqdm==4.66.1
+tqdm==4.66.2
 requests==2.31.0
+
+# ============================================
+# MOVIEPY (Install separately to avoid conflicts)
+# ============================================
+decorator==5.1.1
+proglog==0.1.10
+
