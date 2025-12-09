@@ -29,21 +29,17 @@ WORKDIR /workspace
 # Clone Ovi repository
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
-# Copy requirements.txt and install ALL dependencies
+# Copy requirements.txt and install dependencies
 COPY requirements.txt /workspace/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
-# Install moviepy SEPARATELY (avoid conflicts)
-RUN pip install --no-cache-dir moviepy==1.0.3 || \
-    pip install --no-cache-dir moviepy || \
-    echo "moviepy installation failed, will handle runtime"
-
-# Verify critical packages are installed
-RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
-RUN python -c "import transformers; print(f'Transformers: {transformers.__version__}')"
-RUN python -c "import omegaconf; print('OmegaConf OK')"
-RUN python -c "import pandas; print('Pandas OK')"
-RUN python -c "import pydub; print('Pydub OK')"
+# Verify critical imports
+RUN python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
+RUN python -c "from diffusers import FluxPipeline; print('✓ FluxPipeline available')"
+RUN python -c "import transformers; print(f'✓ Transformers: {transformers.__version__}')"
+RUN python -c "import omegaconf; print('✓ OmegaConf OK')"
+RUN python -c "import pandas; print('✓ Pandas OK')"
+RUN python -c "import pydub; print('✓ Pydub OK')"
 
 # Copy handler
 COPY handler.py /workspace/handler.py
