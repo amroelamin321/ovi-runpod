@@ -33,101 +33,75 @@ RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 COPY requirements.txt /workspace/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
-# ============================================
-# PRE-DOWNLOAD ALL MODELS AT BUILD TIME
-# ============================================
-
 # Create models directory
 RUN mkdir -p /models
 
-# Download Ovi models from Hugging Face
-RUN python -c "
-from huggingface_hub import snapshot_download
-import os
+# Create model download script
+RUN echo 'from huggingface_hub import snapshot_download\n\
+import os\n\
+\n\
+print("📥 Downloading Ovi models...")\n\
+\n\
+try:\n\
+    snapshot_download(\n\
+        repo_id="character-ai/Ovi",\n\
+        local_dir="/models/ovi",\n\
+        cache_dir="/models/.cache",\n\
+        resume_download=True,\n\
+        ignore_patterns=["*.md", "*.txt", ".gitattributes"]\n\
+    )\n\
+    print("✓ Ovi model downloaded")\n\
+except Exception as e:\n\
+    print(f"⚠ Ovi model download warning: {e}")\n\
+\n\
+try:\n\
+    snapshot_download(\n\
+        repo_id="black-forest-labs/FLUX.1-dev",\n\
+        local_dir="/models/flux",\n\
+        cache_dir="/models/.cache",\n\
+        resume_download=True,\n\
+        allow_patterns=["*.safetensors", "*.json", "*.txt"],\n\
+        ignore_patterns=["*.md", ".gitattributes"]\n\
+    )\n\
+    print("✓ FLUX model downloaded")\n\
+except Exception as e:\n\
+    print(f"⚠ FLUX download warning: {e}")\n\
+\n\
+try:\n\
+    snapshot_download(\n\
+        repo_id="google/t5-v1_1-xxl",\n\
+        local_dir="/models/t5",\n\
+        cache_dir="/models/.cache",\n\
+        resume_download=True,\n\
+        allow_patterns=["*.safetensors", "*.json"],\n\
+        ignore_patterns=["*.md", ".gitattributes"]\n\
+    )\n\
+    print("✓ T5 encoder downloaded")\n\
+except Exception as e:\n\
+    print(f"⚠ T5 download warning: {e}")\n\
+\n\
+print("✅ Model downloads complete")\n' > /tmp/download_models.py
 
-print('📥 Downloading Ovi models...')
-
-# Download main Ovi model
-try:
-    snapshot_download(
-        repo_id='character-ai/Ovi',
-        local_dir='/models/ovi',
-        cache_dir='/models/.cache',
-        resume_download=True,
-        ignore_patterns=['*.md', '*.txt', '.gitattributes']
-    )
-    print('✓ Ovi model downloaded')
-except Exception as e:
-    print(f'⚠ Ovi model download warning: {e}')
-
-# Download FLUX model (used by Ovi)
-try:
-    snapshot_download(
-        repo_id='black-forest-labs/FLUX.1-dev',
-        local_dir='/models/flux',
-        cache_dir='/models/.cache',
-        resume_download=True,
-        allow_patterns=['*.safetensors', '*.json', '*.txt'],
-        ignore_patterns=['*.md', '.gitattributes']
-    )
-    print('✓ FLUX model downloaded')
-except Exception as e:
-    print(f'⚠ FLUX download warning: {e}')
-
-# Download T5 text encoder (used by Ovi)
-try:
-    snapshot_download(
-        repo_id='google/t5-v1_1-xxl',
-        local_dir='/models/t5',
-        cache_dir='/models/.cache',
-        resume_download=True,
-        allow_patterns=['*.safetensors', '*.json'],
-        ignore_patterns=['*.md', '.gitattributes']
-    )
-    print('✓ T5 encoder downloaded')
-except Exception as e:
-    print(f'⚠ T5 download warning: {e}')
-
-print('✅ Model downloads complete')
-"
+# Run model download
+RUN python /tmp/download_models.py
 
 # Verify model files exist
-RUN ls -lh /models/ovi || echo "Ovi models location check"
-RUN ls -lh /models/flux || echo "FLUX models location check"
-RUN ls -lh /models/t5 || echo "T5 models location check"
+RUN ls -lh /models/ && echo "Models directory contents listed"
 
-# ============================================
-# VERIFY ALL DEPENDENCIES WORK
-# ============================================
-
-RUN python -c "
-import torch
-import transformers
-import diffusers
-from moviepy.editor import ImageSequenceClip
-import pandas, pydub, librosa, omegaconf
-
-print(f'✓ PyTorch: {torch.__version__}')
-print(f'✓ CUDA Available: {torch.cuda.is_available()}')
-print(f'✓ Transformers: {transformers.__version__}')
-print(f'✓ Diffusers: {diffusers.__version__}')
-
-from diffusers import FluxPipeline
-print('✓ FluxPipeline available')
+# Verify all dependencies work
+RUN python -c "import torch; print(f'✓ PyTorch: {torch.__version__}'); print(f'✓ CUDA Available: {torch.cuda.is_available()}')"
+RUN python -c "import transformers; print(f'✓ Transformers: {transformers.__version__}')"
+RUN python -c "import diffusers; from diffusers import FluxPipeline; print(f'✓ Diffusers: {diffusers.__version__} with FluxPipeline')"
+RUN python -c "from moviepy.editor import ImageSequenceClip; print('✓ Moviepy complete')"
+RUN python -c "import pandas, pydub, librosa, omegaconf; print('✓ All core libraries OK')"
 
 # Test Ovi imports
-import sys
-sys.path.insert(0, '/workspace/ovi')
-from ovi.utils.io_utils import save_video
-print('✓ Ovi imports successful')
-
-print('🚀 ALL SYSTEMS READY')
-"
+RUN python -c "import sys; sys.path.insert(0, '/workspace/ovi'); from ovi.utils.io_utils import save_video; print('✓ Ovi imports successful')"
 
 # Copy handler
 COPY handler.py /workspace/handler.py
 
-# Create necessary directories
+# Create output directory
 RUN mkdir -p /tmp/video-output
 
 # Set environment variables
@@ -137,5 +111,7 @@ ENV HF_HOME=/models/.cache
 ENV TRANSFORMERS_CACHE=/models/.cache
 ENV HF_DATASETS_CACHE=/models/.cache
 
-# Run handler
+# Final ready message
+RUN echo "🚀 OVI CONTAINER BUILD COMPLETE - READY FOR VIDEO GENERATION 🚀"
+
 CMD ["python", "-u", "handler.py"]
