@@ -22,8 +22,10 @@ try:
         api_secret=os.environ.get('CLOUDINARY_API_SECRET')
     )
     CLOUDINARY_ENABLED = True
+    logger.info("✓ Cloudinary configured")
 except:
     CLOUDINARY_ENABLED = False
+    logger.warning("⚠ Cloudinary not configured")
 
 
 class OviVideoGenerator:
@@ -32,7 +34,7 @@ class OviVideoGenerator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
         logger.info("="*80)
-        logger.info("OVI 1.1 INITIALIZING (NETWORK VOLUME MODE)")
+        logger.info("OVI 1.1 INITIALIZING")
         logger.info("="*80)
         
         if torch.cuda.is_available():
@@ -43,13 +45,14 @@ class OviVideoGenerator:
         try:
             self._initialize_model()
             self.model_initialized = True
-            logger.info("✓ Initialized")
+            logger.info("✓ Model initialized")
         except Exception as e:
             logger.error(f"✗ Init failed: {str(e)}")
+            logger.error(traceback.format_exc())
             self.model_initialized = False
 
     def _initialize_model(self):
-        """Use models from network volume"""
+        """Initialize using network volume models"""
         ovi_path = '/workspace/ovi'
         if ovi_path not in sys.path:
             sys.path.insert(0, ovi_path)
@@ -57,20 +60,24 @@ class OviVideoGenerator:
         if not os.path.exists(ovi_path):
             raise RuntimeError("Ovi repo not found")
         
-        # Network volume path in serverless
+        logger.info(f"✓ Ovi path: {ovi_path}")
+        
+        # Network volume mounts at /runpod-volume in serverless
         self.ckpt_dir = '/runpod-volume/ckpts'
         
         if not os.path.exists(self.ckpt_dir):
-            raise RuntimeError(f"Models not found at {self.ckpt_dir}. Ensure network volume is mounted.")
+            raise RuntimeError(f"Models not found at {self.ckpt_dir}. Check network volume mount.")
         
+        # Verify models
         size_mb = sum(f.stat().st_size for f in Path(self.ckpt_dir).rglob('*') if f.is_file()) / (1024**2)
         logger.info(f"✓ Models: {self.ckpt_dir} ({size_mb/1024:.1f} GB)")
         
+        # Verify inference script
         self.inference_script = os.path.join(ovi_path, 'inference.py')
         if not os.path.exists(self.inference_script):
             raise RuntimeError("inference.py not found")
         
-        logger.info("✓ Ready")
+        logger.info("✓ Ready for generation")
 
     def generate_video(self, prompt: str, duration: int = 10, image_url: Optional[str] = None, seed: Optional[int] = None) -> Dict[str, Any]:
         """Generate video"""
@@ -85,7 +92,7 @@ class OviVideoGenerator:
             raise ValueError("Duration must be 5 or 10")
         
         mode = 'i2v' if image_url else 't2v'
-        logger.info(f"GENERATING {duration}s {mode.upper()}")
+        logger.info(f"GENERATING {duration}s {mode.upper()}: {prompt[:60]}...")
         
         os.makedirs("/tmp/video-output", exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -106,17 +113,18 @@ class OviVideoGenerator:
             image_path = self._download_image(image_url)
             cmd.extend(["--image-prompt", image_path])
         
-        logger.info("⏳ Generating...")
+        logger.info("⏳ Generating (60-90 seconds)...")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=900, cwd='/workspace/ovi')
         
         if result.returncode != 0:
+            logger.error(f"Generation failed: {result.stderr}")
             raise RuntimeError(f"Generation failed: {result.stderr}")
         
         if not os.path.exists(output_file):
-            raise RuntimeError("Output not created")
+            raise RuntimeError("Output file not created")
         
         file_size = os.path.getsize(output_file)
-        logger.info(f"✓ Generated: {file_size/1024/1024:.2f} MB")
+        logger.info(f"✓ Video: {file_size/1024/1024:.2f} MB")
         
         return {
             'status': 'success',
@@ -132,18 +140,28 @@ class OviVideoGenerator:
         import urllib.request
         from PIL import Image
         
+        logger.info(f"Downloading image: {image_url}")
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
             urllib.request.urlretrieve(image_url, tmp.name)
             Image.open(tmp.name).verify()
+            logger.info(f"✓ Image: {tmp.name}")
             return tmp.name
 
     def upload_to_cloudinary(self, video_path: str, prompt: str, duration: int, mode: str) -> Dict[str, Any]:
         """Upload to Cloudinary"""
         
         if not CLOUDINARY_ENABLED:
-            return {'status': 'success', 'url': f'file://{video_path}', 'public_id': os.path.basename(video_path), 'video_id': os.path.basename(video_path)}
+            logger.warning("Cloudinary not configured")
+            return {
+                'status': 'success',
+                'url': f'file://{video_path}',
+                'public_id': os.path.basename(video_path),
+                'video_id': os.path.basename(video_path)
+            }
         
+        logger.info("Uploading to Cloudinary...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         response = cloudinary.uploader.upload(
             video_path,
             resource_type='video',
@@ -154,49 +172,94 @@ class OviVideoGenerator:
             chunk_size=6000000
         )
         
-        return {'status': 'success', 'url': response['secure_url'], 'public_id': response['public_id'], 'video_id': response['public_id']}
+        logger.info(f"✓ Uploaded: {response['secure_url']}")
+        
+        return {
+            'status': 'success',
+            'url': response['secure_url'],
+            'public_id': response['public_id'],
+            'video_id': response['public_id']
+        }
 
     def cleanup(self, video_path: str):
-        """Clean up"""
+        """Clean up temp files"""
         try:
             if os.path.exists(video_path):
                 os.remove(video_path)
-        except:
-            pass
+                logger.info(f"✓ Cleaned: {video_path}")
+        except Exception as e:
+            logger.warning(f"Cleanup error: {str(e)}")
 
 
+# Initialize generator
+logger.info("Starting Ovi generator...")
 try:
     generator = OviVideoGenerator()
+    logger.info("✓ Generator ready")
 except Exception as e:
-    logger.error(f"Init failed: {str(e)}")
+    logger.error(f"✗ Generator init failed: {str(e)}")
     generator = None
 
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
-    """RunPod handler"""
+    """
+    RunPod serverless handler
+    
+    Input:
+    {
+        "input": {
+            "prompt": "A cat playing piano",
+            "duration": 10,
+            "image_url": "https://...",  // optional for i2v
+            "seed": 42  // optional
+        }
+    }
+    """
     
     job_input = job.get('input', {})
     start_time = datetime.now()
     
     try:
         if generator is None or not generator.model_initialized:
-            return {'status': 'error', 'message': 'Model not initialized'}
+            return {
+                'status': 'error',
+                'message': 'Model initialization failed. Check worker logs.'
+            }
         
+        # Extract params
         prompt = job_input.get('prompt', '').strip()
         duration = job_input.get('duration', 10)
         image_url = job_input.get('image_url')
         seed = job_input.get('seed')
         
         if not prompt:
-            return {'status': 'error', 'message': 'Prompt required'}
+            return {'status': 'error', 'message': 'Prompt is required'}
         
         mode = 'i2v' if image_url else 't2v'
+        logger.info(f"REQUEST: {mode.upper()} - {duration}s")
         
-        gen_result = generator.generate_video(prompt=prompt, duration=duration, image_url=image_url, seed=seed)
-        upload_result = generator.upload_to_cloudinary(gen_result['video_path'], prompt, duration, gen_result['mode'])
+        # Generate video
+        gen_result = generator.generate_video(
+            prompt=prompt,
+            duration=duration,
+            image_url=image_url,
+            seed=seed
+        )
+        
+        # Upload to Cloudinary
+        upload_result = generator.upload_to_cloudinary(
+            video_path=gen_result['video_path'],
+            prompt=prompt,
+            duration=duration,
+            mode=gen_result['mode']
+        )
+        
+        # Cleanup
         generator.cleanup(gen_result['video_path'])
         
         generation_time = (datetime.now() - start_time).total_seconds()
+        
+        logger.info(f"✓ SUCCESS: {upload_result['url']} ({generation_time:.1f}s)")
         
         return {
             'status': 'success',
@@ -209,9 +272,14 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        return {'status': 'error', 'message': str(e)}
+        logger.error(f"✗ ERROR: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            'status': 'error',
+            'message': str(e)
+        }
 
 
 if __name__ == '__main__':
+    logger.info("Starting RunPod serverless worker...")
     runpod.serverless.start({'handler': handler})
