@@ -10,14 +10,14 @@ RUN pip install --upgrade pip setuptools wheel
 
 WORKDIR /workspace
 
-# Clone Ovi (code only)
+# Clone Ovi code (no models)
 RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 
 # Install dependencies
 COPY requirements.txt /workspace/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
-# Verify
+# Verify imports
 RUN python -c "import torch; print('PyTorch OK')"
 RUN python -c "from diffusers import FluxPipeline; print('Diffusers OK')"
 
@@ -28,12 +28,5 @@ RUN mkdir -p /tmp/video-output
 
 ENV PYTHONPATH="/workspace/ovi:${PYTHONPATH}"
 ENV PYTHONUNBUFFERED=1
-
-CMD ["python", "-u", "handler.py"]
-
-ENV PYTHONPATH="/workspace/ovi:${PYTHONPATH}"
-ENV PYTHONUNBUFFERED=1
-
-RUN echo "🚀 Build complete - Models ready at /workspace/ckpts 🚀"
 
 CMD ["python", "-u", "handler.py"]
