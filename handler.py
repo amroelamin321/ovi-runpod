@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 import tempfile
 from typing import Dict, Any, Optional
-import subprocess
+from omegaconf import OmegaConf
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class OviVideoGenerator:
             self.model_initialized = False
 
     def _initialize_model(self):
-        """Initialize using network volume models"""
+        """Initialize OviFusionEngine directly"""
         ovi_path = '/workspace/ovi'
         if ovi_path not in sys.path:
             sys.path.insert(0, ovi_path)
@@ -72,15 +72,33 @@ class OviVideoGenerator:
         size_mb = sum(f.stat().st_size for f in Path(self.ckpt_dir).rglob('*') if f.is_file()) / (1024**2)
         logger.info(f"✓ Models: {self.ckpt_dir} ({size_mb/1024:.1f} GB)")
         
-        # Verify inference script
-        self.inference_script = os.path.join(ovi_path, 'inference.py')
-        if not os.path.exists(self.inference_script):
-            raise RuntimeError("inference.py not found")
+        # Load base config
+        config_path = os.path.join(ovi_path, 'ovi/configs/inference/inference_fusion.yaml')
+        if not os.path.exists(config_path):
+            raise RuntimeError(f"Config not found: {config_path}")
         
-        logger.info("✓ Ready for generation")
+        self.base_config = OmegaConf.load(config_path)
+        
+        # Override checkpoint directory in config
+        self.base_config.ckpt_dir = self.ckpt_dir
+        
+        logger.info("✓ Config loaded")
+        
+        # Import OviFusionEngine
+        from ovi.ovi_fusion_engine import OviFusionEngine
+        
+        # Initialize engine
+        target_dtype = torch.bfloat16
+        self.ovi_engine = OviFusionEngine(
+            config=self.base_config,
+            device=self.device,
+            target_dtype=target_dtype
+        )
+        
+        logger.info("✓ OviFusionEngine loaded")
 
     def generate_video(self, prompt: str, duration: int = 10, image_url: Optional[str] = None, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Generate video"""
+        """Generate video using OviFusionEngine"""
         
         if not self.model_initialized:
             raise RuntimeError("Model not initialized")
@@ -94,31 +112,59 @@ class OviVideoGenerator:
         mode = 'i2v' if image_url else 't2v'
         logger.info(f"GENERATING {duration}s {mode.upper()}: {prompt[:60]}...")
         
+        # Handle image download for i2v
+        image_path = None
+        if image_url:
+            image_path = self._download_image(image_url)
+        
+        # Set video resolution based on duration
+        # 5s uses 960x960, 10s uses 960x960 (both same resolution, different checkpoint)
+        video_frame_height_width = [960, 960]
+        
+        # Determine seed
+        if seed is None:
+            seed = 100
+        
+        # Generation parameters (you can expose these in API later)
+        solver_name = "unipc"
+        sample_steps = 50
+        shift = 5.0
+        video_guidance_scale = 4.0
+        audio_guidance_scale = 3.0
+        slg_layer = 11
+        video_negative_prompt = ""
+        audio_negative_prompt = ""
+        
+        logger.info("⏳ Generating (60-90 seconds)...")
+        
+        try:
+            generated_video, generated_audio, generated_image = self.ovi_engine.generate(
+                text_prompt=prompt,
+                image_path=image_path,
+                video_frame_height_width=video_frame_height_width,
+                seed=seed,
+                solver_name=solver_name,
+                sample_steps=sample_steps,
+                shift=shift,
+                video_guidance_scale=video_guidance_scale,
+                audio_guidance_scale=audio_guidance_scale,
+                slg_layer=slg_layer,
+                video_negative_prompt=video_negative_prompt,
+                audio_negative_prompt=audio_negative_prompt
+            )
+        except Exception as e:
+            logger.error(f"Generation error: {str(e)}")
+            raise RuntimeError(f"Generation failed: {str(e)}")
+        
+        # Save video to temp file
         os.makedirs("/tmp/video-output", exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         output_file = f"/tmp/video-output/ovi_{mode}_{duration}s_{timestamp}.mp4"
         
-        cmd = [
-            "python", self.inference_script,
-            "--config-file", os.path.join('/workspace/ovi', 'ovi/configs/inference/inference_fusion.yaml'),
-            "--ckpt-dir", self.ckpt_dir,
-            "--text-prompt", prompt,
-            "--output-path", output_file,
-        ]
+        # Import save function
+        from ovi.utils.io_utils import save_video
         
-        if seed:
-            cmd.extend(["--seed", str(seed)])
-        
-        if image_url:
-            image_path = self._download_image(image_url)
-            cmd.extend(["--image-prompt", image_path])
-        
-        logger.info("⏳ Generating (60-90 seconds)...")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=900, cwd='/workspace/ovi')
-        
-        if result.returncode != 0:
-            logger.error(f"Generation failed: {result.stderr}")
-            raise RuntimeError(f"Generation failed: {result.stderr}")
+        save_video(output_file, generated_video, generated_audio, fps=24, sample_rate=16000)
         
         if not os.path.exists(output_file):
             raise RuntimeError("Output file not created")
@@ -126,13 +172,20 @@ class OviVideoGenerator:
         file_size = os.path.getsize(output_file)
         logger.info(f"✓ Video: {file_size/1024/1024:.2f} MB")
         
+        # Save generated image if exists (for t2i2v mode)
+        if generated_image is not None:
+            image_output = output_file.replace('.mp4', '.png')
+            generated_image.save(image_output)
+            logger.info(f"✓ Image saved: {image_output}")
+        
         return {
             'status': 'success',
             'video_path': output_file,
             'mode': mode,
             'duration': duration,
             'prompt': prompt,
-            'file_size_mb': round(file_size/1024/1024, 2)
+            'file_size_mb': round(file_size/1024/1024, 2),
+            'seed': seed
         }
 
     def _download_image(self, image_url: str) -> str:
@@ -187,6 +240,10 @@ class OviVideoGenerator:
             if os.path.exists(video_path):
                 os.remove(video_path)
                 logger.info(f"✓ Cleaned: {video_path}")
+            # Also clean up any .png files from t2i2v
+            png_path = video_path.replace('.mp4', '.png')
+            if os.path.exists(png_path):
+                os.remove(png_path)
         except Exception as e:
             logger.warning(f"Cleanup error: {str(e)}")
 
@@ -198,6 +255,7 @@ try:
     logger.info("✓ Generator ready")
 except Exception as e:
     logger.error(f"✗ Generator init failed: {str(e)}")
+    logger.error(traceback.format_exc())
     generator = None
 
 
@@ -268,7 +326,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             'mode': gen_result['mode'],
             'duration': duration,
             'generation_time_seconds': round(generation_time, 2),
-            'prompt': prompt
+            'prompt': prompt,
+            'seed': gen_result['seed']
         }
         
     except Exception as e:
