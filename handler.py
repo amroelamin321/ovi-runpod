@@ -72,7 +72,7 @@ class OviVideoGenerator:
         size_mb = sum(f.stat().st_size for f in Path(self.ckpt_dir).rglob('*') if f.is_file()) / (1024**2)
         logger.info(f"✓ Models: {self.ckpt_dir} ({size_mb/1024:.1f} GB)")
         
-        # Load base config
+        # Load base config with full path
         config_path = os.path.join(ovi_path, 'ovi/configs/inference/inference_fusion.yaml')
         if not os.path.exists(config_path):
             raise RuntimeError(f"Config not found: {config_path}")
@@ -84,18 +84,26 @@ class OviVideoGenerator:
         
         logger.info("✓ Config loaded")
         
-        # Import OviFusionEngine
-        from ovi.ovi_fusion_engine import OviFusionEngine
+        # Change to ovi directory before importing (module loads config on import)
+        original_cwd = os.getcwd()
+        os.chdir(ovi_path)
         
-        # Initialize engine
-        target_dtype = torch.bfloat16
-        self.ovi_engine = OviFusionEngine(
-            config=self.base_config,
-            device=self.device,
-            target_dtype=target_dtype
-        )
-        
-        logger.info("✓ OviFusionEngine loaded")
+        try:
+            # Import OviFusionEngine
+            from ovi.ovi_fusion_engine import OviFusionEngine
+            
+            # Initialize engine
+            target_dtype = torch.bfloat16
+            self.ovi_engine = OviFusionEngine(
+                config=self.base_config,
+                device=self.device,
+                target_dtype=target_dtype
+            )
+            
+            logger.info("✓ OviFusionEngine loaded")
+        finally:
+            # Restore original working directory
+            os.chdir(original_cwd)
 
     def generate_video(self, prompt: str, duration: int = 10, image_url: Optional[str] = None, seed: Optional[int] = None) -> Dict[str, Any]:
         """Generate video using OviFusionEngine"""
