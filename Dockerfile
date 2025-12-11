@@ -17,9 +17,14 @@ RUN git clone https://github.com/character-ai/Ovi.git /workspace/ovi
 COPY requirements.txt /workspace/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
+# Install Flash Attention 2 (must be after torch installation)
+RUN pip install packaging ninja
+RUN pip install flash-attn --no-build-isolation
+
 # Verify imports
 RUN python -c "import torch; print('PyTorch OK')"
 RUN python -c "from diffusers import FluxPipeline; print('Diffusers OK')"
+RUN python -c "import flash_attn; print('Flash Attention OK')"
 
 # Copy handler
 COPY handler.py /workspace/handler.py
